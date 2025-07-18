@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.db import init_db
+from .db import init_db
 
 app = FastAPI()
 
@@ -11,3 +11,10 @@ async def startup_event():
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Sales Agent API!"}
+
+
+@app.get("/health")
+async def health_check():
+    """Endpoint used by the LLM to verify connectivity with the backend."""
+    return {"status": "ok", "message": "Backend reachable by LLM"}
+
