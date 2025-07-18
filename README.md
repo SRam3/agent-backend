@@ -1,10 +1,4 @@
-# Sales Agent API
-
-This project contains a minimal FastAPI application used for LLM experiments.
-
-## Development
-
-Install dependencies:
+@@ -8,35 +8,36 @@ Install dependencies:
 
 ```bash
 pip install -r sales_agent_api/requirements.txt
@@ -30,6 +24,7 @@ contain the following secrets:
 - `DBNAME`
 
 The `.env` file in `sales_agent_api/` shows how to provide the vault URL during
+development. It contains a single line specifying your Key Vault:
 development. It contains a single line specifying your Key Vault. Replace the
 value if your vault URL differs:
 
