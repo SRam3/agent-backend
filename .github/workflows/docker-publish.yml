@@ -36,6 +36,7 @@ jobs:
           username: ${{ secrets.DOCKERUSERNAME }}
           password: ${{ secrets.DOCKERPASSWORD }}
 
+
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
@@ -43,3 +44,4 @@ jobs:
           file: sales_agent_api/Dockerfile
           push: true
           tags: ${{ secrets.DOCKERUSERNAME }}/sales-agent-api:latest
+
