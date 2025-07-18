@@ -30,7 +30,11 @@ contain the following secrets:
 - `DBNAME`
 
 The `.env` file in `sales_agent_api/` shows how to provide the vault URL during
-development.
+development. It contains a single line specifying your Key Vault:
+
+```dotenv
+KEY_VAULT_URL=https://kv-r8fm.vault.azure.net/
+```
 
 ## API Endpoints
 
