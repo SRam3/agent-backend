@@ -3,6 +3,6 @@ uvicorn
 sqlmodel
 asyncpg
 python-dotenv
-httpx
+httpx>=0.23,<0.25
 azure-identity
 azure-keyvault-secrets
