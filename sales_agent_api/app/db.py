@@ -9,21 +9,30 @@ from azure.keyvault.secrets import SecretClient
 
 load_dotenv()
 
-# Key Vault URL
-KEY_VAULT_URL = os.getenv("KEY_VAULT_URL")
 
-# Initialize Key Vault client
-credential = DefaultAzureCredential()
-client = SecretClient(vault_url=KEY_VAULT_URL, credential=credential)
+def _load_db_settings():
+    """Load database credentials from Azure Key Vault."""
 
-# Fetch secrets
-DB_USERNAME = client.get_secret("DBUSERNAME").value
-DB_PASSWORD = client.get_secret("psqladmin-password").value
-DB_HOST = client.get_secret("DBHOST").value
-DB_NAME = client.get_secret("DBNAME").value
+    vault_url = os.getenv("KEY_VAULT_URL")
+    if not vault_url:
+        raise RuntimeError("KEY_VAULT_URL environment variable must be set")
+
+    credential = DefaultAzureCredential()
+    client = SecretClient(vault_url=vault_url, credential=credential)
+
+    username = client.get_secret("DBUSERNAME").value
+    password = client.get_secret("psqladmin-password").value
+    host = client.get_secret("DBHOST").value
+    name = client.get_secret("DBNAME").value
+
+    return username, password, host, name
+
+DB_USERNAME, DB_PASSWORD, DB_HOST, DB_NAME = _load_db_settings()
 
 # Construct DATABASE_URL
-DATABASE_URL = f"postgresql+asyncpg://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+DATABASE_URL = (
+    f"postgresql+asyncpg://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+)
 
 engine: AsyncEngine = create_engine(DATABASE_URL, echo=True, future=True)
 
