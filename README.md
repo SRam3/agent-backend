@@ -17,7 +17,8 @@ pytest -q
 ```
 
 Database credentials are always fetched from **Azure Key Vault**. Set the
-`KEY_VAULT_URL` environment variable to the URL of your vault. The vault must
+`KEY_VAULT_URL` environment variable to your vault URL, e.g.
+`https://kv-r8fm.vault.azure.net/`. The vault must
 contain the following secrets:
 
 - `DBUSERNAME`
