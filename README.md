@@ -10,6 +10,9 @@ Install dependencies:
 pip install -r sales_agent_api/requirements.txt
 ```
 
+`httpx` is pinned below version 0.25 for compatibility with Starlette's
+`TestClient` used in the tests.
+
 Run tests:
 
 ```bash
