@@ -34,7 +34,7 @@ development. It contains a single line specifying your Key Vault. Replace the
 value if your vault URL differs:
 
 ```dotenv
-KEY_VAULT_URL=https://kv-r8fm.vault.azure.net/
+KEY_VAULT_URL=https://<your-keyvault-name>.vault.azure.net/
 ```
 
 ## API Endpoints
@@ -42,9 +42,3 @@ KEY_VAULT_URL=https://kv-r8fm.vault.azure.net/
 - `GET /` – Welcome message.
 - `GET /health` – Returns a simple payload confirming the backend is reachable.
 
-## Continuous Deployment
-
-The provided GitHub Actions workflow builds and pushes a Docker image on every
-push to `main`. Docker Hub credentials are retrieved from the Azure Key Vault
-`kv-r8fm` using a service principal configured via the repository secrets
-`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_CLIENT_SECRET`.
