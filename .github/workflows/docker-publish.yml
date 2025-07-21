@@ -47,6 +47,6 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: ./sales_agent_api
-          file: Dockerfile
+          file: ./sales_agent_api/Dockerfile
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/sales-agent-api:latest
