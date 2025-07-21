@@ -34,10 +34,11 @@ development. It contains a single line specifying your Key Vault. Replace the
 value if your vault URL differs:
 
 ```dotenv
-KEY_VAULT_URL=https://<KEY_VAULT_NAME>.vault.azure.net/
+KEY_VAULT_URL=https://<your-keyvault-name>.vault.azure.net/
 ```
 
 ## API Endpoints
 
 - `GET /` – Welcome message.
 - `GET /health` – Returns a simple payload confirming the backend is reachable.
+
