@@ -11,19 +11,27 @@ load_dotenv()
 
 
 def _load_db_settings():
-    """Load database credentials from Azure Key Vault."""
+    """Load database credentials from Azure Key Vault or environment vars."""
 
     vault_url = os.getenv("KEY_VAULT_URL")
-    if not vault_url:
-        raise RuntimeError("KEY_VAULT_URL environment variable must be set")
+    if vault_url:
+        credential = DefaultAzureCredential()
+        client = SecretClient(vault_url=vault_url, credential=credential)
 
-    credential = DefaultAzureCredential()
-    client = SecretClient(vault_url=vault_url, credential=credential)
-
-    username = client.get_secret("DBUSERNAME").value
-    password = client.get_secret("psqladmin-password").value
-    host = client.get_secret("DBHOST").value
-    name = client.get_secret("DBNAME").value
+        username = client.get_secret("DBUSERNAME").value
+        password = client.get_secret("psqladmin-password").value
+        host = client.get_secret("DBHOST").value
+        name = client.get_secret("DBNAME").value
+    else:
+        username = os.getenv("DB_USERNAME")
+        password = os.getenv("DB_PASSWORD")
+        host = os.getenv("DB_HOST")
+        name = os.getenv("DB_NAME")
+        if not all([username, password, host, name]):
+            raise RuntimeError(
+                "Database credentials not found. Provide KEY_VAULT_URL or set "
+                "DB_USERNAME, DB_PASSWORD, DB_HOST and DB_NAME."
+            )
 
     return username, password, host, name
 
