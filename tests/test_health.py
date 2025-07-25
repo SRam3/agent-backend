@@ -45,3 +45,27 @@ def test_health_endpoint(monkeypatch):
         }
 
 
+def test_health_endpoint_local_env(monkeypatch):
+    """Verify the health endpoint using local environment variables."""
+
+    monkeypatch.delenv("KEY_VAULT_URL", raising=False)
+    monkeypatch.setenv("DB_USERNAME", "user")
+    monkeypatch.setenv("DB_PASSWORD", "pass")
+    monkeypatch.setenv("DB_HOST", "localhost")
+    monkeypatch.setenv("DB_NAME", "testdb")
+
+    import sales_agent_api.app.db as db
+    import importlib
+    importlib.reload(db)
+
+    from sales_agent_api.app.main import app
+
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "message": "Backend reachable by LLM",
+    }
+
+
