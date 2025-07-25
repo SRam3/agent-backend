@@ -4,10 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def _load_db_settings():
@@ -23,14 +24,20 @@ def _load_db_settings():
         host = client.get_secret("DBHOST").value
         name = client.get_secret("DBNAME").value
     else:
-        username = os.getenv("DB_USERNAME")
-        password = os.getenv("DB_PASSWORD")
-        host = os.getenv("DB_HOST")
-        name = os.getenv("DB_NAME")
+        username = os.getenv("DB_USERNAME") or os.getenv("DBUSERNAME")
+        password = (
+            os.getenv("DB_PASSWORD")
+            or os.getenv("DBPASSWORD")
+            or os.getenv("PSQLADMIN_PASSWORD")
+            or os.getenv("psqladmin-password")
+        )
+        host = os.getenv("DB_HOST") or os.getenv("DBHOST")
+        name = os.getenv("DB_NAME") or os.getenv("DBNAME")
         if not all([username, password, host, name]):
             raise RuntimeError(
                 "Database credentials not found. Provide KEY_VAULT_URL or set "
-                "DB_USERNAME, DB_PASSWORD, DB_HOST and DB_NAME."
+                "DB_USERNAME (or DBUSERNAME), DB_PASSWORD (or DBPASSWORD), "
+                "DB_HOST (or DBHOST), and DB_NAME (or DBNAME)."
             )
 
     return username, password, host, name

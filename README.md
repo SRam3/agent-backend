@@ -30,15 +30,17 @@ vault must contain the following secrets:
 - `DBNAME`
 
 If `KEY_VAULT_URL` is **not** provided, credentials must instead come from the
-following environment variables:
+following environment variables (their Key Vault equivalents like `DBUSERNAME`
+are also accepted):
 
 - `DB_USERNAME`
 - `DB_PASSWORD`
 - `DB_HOST`
 - `DB_NAME`
 
-The `.env` file in `sales_agent_api/` shows both approaches. Replace the values
-as needed:
+The `.env` file in `sales_agent_api/` is loaded automatically when the app
+starts, so you can place your local credentials there. Replace the values as
+needed:
 
 ```dotenv
 # KEY_VAULT_URL=https://<your-keyvault-name>.vault.azure.net/
