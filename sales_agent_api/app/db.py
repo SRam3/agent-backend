@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, create_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
@@ -27,6 +27,7 @@ def _load_db_settings():
 
     return username, password, host, name
 
+
 DB_USERNAME, DB_PASSWORD, DB_HOST, DB_NAME = _load_db_settings()
 
 # Construct DATABASE_URL
@@ -34,7 +35,8 @@ DATABASE_URL = (
     f"postgresql+asyncpg://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
 )
 
-engine: AsyncEngine = create_engine(DATABASE_URL, echo=True, future=True)
+# Use create_async_engine for asynchronous operations
+engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=True, future=True)
 
 async def init_db():
     async with engine.begin() as conn:
