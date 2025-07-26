@@ -45,3 +45,51 @@ def test_health_endpoint(monkeypatch):
         }
 
 
+def test_health_endpoint_local_env(monkeypatch):
+    """Verify the health endpoint using local environment variables."""
+
+    monkeypatch.delenv("KEY_VAULT_URL", raising=False)
+    monkeypatch.setenv("DB_USERNAME", "user")
+    monkeypatch.setenv("DB_PASSWORD", "pass")
+    monkeypatch.setenv("DB_HOST", "localhost")
+    monkeypatch.setenv("DB_NAME", "testdb")
+
+    import sales_agent_api.app.db as db
+    import importlib
+    importlib.reload(db)
+
+    from sales_agent_api.app.main import app
+
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "message": "Backend reachable by LLM",
+    }
+
+
+def test_health_endpoint_dotenv(monkeypatch):
+    """Verify credentials are loaded from the packaged .env file."""
+
+    monkeypatch.delenv("KEY_VAULT_URL", raising=False)
+    monkeypatch.delenv("DB_USERNAME", raising=False)
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
+    monkeypatch.delenv("DB_HOST", raising=False)
+    monkeypatch.delenv("DB_NAME", raising=False)
+
+    import sales_agent_api.app.db as db
+    import importlib
+    importlib.reload(db)
+
+    from sales_agent_api.app.main import app
+
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "message": "Backend reachable by LLM",
+    }
+
+
