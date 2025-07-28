@@ -34,6 +34,11 @@ def test_health_endpoint(monkeypatch):
         import sales_agent_api.app.db as db
         importlib.reload(db)
 
+        async def dummy_init_db():
+            pass
+
+        db.init_db = dummy_init_db
+
         from sales_agent_api.app.main import app
 
         client = TestClient(app)
@@ -58,6 +63,11 @@ def test_health_endpoint_local_env(monkeypatch):
     import importlib
     importlib.reload(db)
 
+    async def dummy_init_db():
+        pass
+
+    db.init_db = dummy_init_db
+
     from sales_agent_api.app.main import app
 
     client = TestClient(app)
@@ -81,6 +91,11 @@ def test_health_endpoint_dotenv(monkeypatch):
     import sales_agent_api.app.db as db
     import importlib
     importlib.reload(db)
+
+    async def dummy_init_db():
+        pass
+
+    db.init_db = dummy_init_db
 
     from sales_agent_api.app.main import app
 
