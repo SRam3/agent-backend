@@ -30,26 +30,42 @@ vault must contain the following secrets:
 - `DBNAME`
 
 If `KEY_VAULT_URL` is **not** provided, credentials must instead come from the
-following environment variables:
+following environment variables. The application supports both the .env file and 
+system environment variables using the standardized Key Vault-compatible names:
+- `DBUSERNAME`
+- `DBPASSWORD`
+- `DBHOST`
+- `DBNAME`
 
-- `DB_USERNAME`
-- `DB_PASSWORD`
-- `DB_HOST`
-- `DB_NAME`
-
-The `.env` file in `sales_agent_api/` shows both approaches. Replace the values
-as needed:
+The `.env` file in `sales_agent_api/` is loaded automatically when the app
+starts, so you can place your local credentials there. Replace the values as
+needed:
 
 ```dotenv
 # KEY_VAULT_URL=https://<your-keyvault-name>.vault.azure.net/
-DB_USERNAME=your-user
-DB_PASSWORD=your-pass
-DB_HOST=localhost
-DB_NAME=testdb
+DBUSERNAME=your-user
+DBPASSWORD=your-pass
+DBHOST=localhost
+DBNAME=testdb
 ```
 
 ## API Endpoints
 
 - `GET /` – Welcome message.
 - `GET /health` – Returns a simple payload confirming the backend is reachable.
+
+## Docker
+
+The repository's Dockerfile lives in the `sales_agent_api/` directory. Build
+the image using that directory as the build context:
+
+```bash
+docker build -t sales-agent-api -f sales_agent_api/Dockerfile sales_agent_api
+```
+
+Running the container exposes the API on port 8000:
+
+```bash
+docker run -p 8000:8000 sales-agent-api
+```
 
