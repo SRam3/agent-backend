@@ -20,7 +20,7 @@ def test_health_endpoint(monkeypatch):
     def fake_get_secret(name):
         mapping = {
             "DBUSERNAME": DummySecret("user"),
-            "psqladmin-password": DummySecret("pass"),
+            "DBPASSWORD": DummySecret("pass"), 
             "DBHOST": DummySecret("localhost"),
             "DBNAME": DummySecret("testdb"),
         }
@@ -49,10 +49,10 @@ def test_health_endpoint_local_env(monkeypatch):
     """Verify the health endpoint using local environment variables."""
 
     monkeypatch.delenv("KEY_VAULT_URL", raising=False)
-    monkeypatch.setenv("DB_USERNAME", "user")
-    monkeypatch.setenv("DB_PASSWORD", "pass")
-    monkeypatch.setenv("DB_HOST", "localhost")
-    monkeypatch.setenv("DB_NAME", "testdb")
+    monkeypatch.setenv("DBUSERNAME", "user")
+    monkeypatch.setenv("DBPASSWORD", "pass")
+    monkeypatch.setenv("DBHOST", "localhost")
+    monkeypatch.setenv("DBNAME", "testdb")
 
     import sales_agent_api.app.db as db
     import importlib
@@ -73,10 +73,10 @@ def test_health_endpoint_dotenv(monkeypatch):
     """Verify credentials are loaded from the packaged .env file."""
 
     monkeypatch.delenv("KEY_VAULT_URL", raising=False)
-    monkeypatch.delenv("DB_USERNAME", raising=False)
-    monkeypatch.delenv("DB_PASSWORD", raising=False)
-    monkeypatch.delenv("DB_HOST", raising=False)
-    monkeypatch.delenv("DB_NAME", raising=False)
+    monkeypatch.delenv("DBUSERNAME", raising=False)
+    monkeypatch.delenv("DBPASSWORD", raising=False)
+    monkeypatch.delenv("DBHOST", raising=False)
+    monkeypatch.delenv("DBNAME", raising=False)
 
     import sales_agent_api.app.db as db
     import importlib
@@ -91,5 +91,3 @@ def test_health_endpoint_dotenv(monkeypatch):
         "status": "ok",
         "message": "Backend reachable by LLM",
     }
-
-
