@@ -2,6 +2,7 @@ fastapi
 uvicorn
 sqlmodel
 asyncpg
+aiosqlite
 python-dotenv
 httpx>=0.23,<0.25
 azure-identity
