@@ -62,14 +62,14 @@ def test_user_found(monkeypatch):
 
     async def populate():
         async with async_session() as session:
-            client = Client(id=1, name="cafe arenillo")
+            client = Client(client_id=1, name="cafe arenillo")
             session.add(client)
             await session.commit()
-            user = ClientUser(name="Alice", phone_number="123", client_id=1)
+            user = ClientUser(name="Alice", phone="123", client_id=1)
             session.add(user)
             await session.commit()
             await session.refresh(user)
-            return user.id
+            return user.user_id
 
     user_id = asyncio.run(populate())
 
@@ -89,7 +89,7 @@ def test_user_not_found(monkeypatch):
 
     async def populate():
         async with async_session() as session:
-            client = Client(id=1, name="cafe arenillo")
+            client = Client(client_id=1, name="cafe arenillo")
             session.add(client)
             await session.commit()
 

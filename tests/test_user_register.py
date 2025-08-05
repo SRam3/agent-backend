@@ -61,7 +61,7 @@ def test_register_user(monkeypatch):
 
     async def populate():
         async with async_session() as session:
-            client = Client(id=1, name="cafe arenillo")
+            client = Client(client_id=1, name="cafe arenillo")
             session.add(client)
             await session.commit()
 
@@ -71,11 +71,13 @@ def test_register_user(monkeypatch):
     payload = {"name": "Bob", "phone": "987"}
     response = client.post("/users/register", json=payload)
     assert response.status_code == 201
-    assert response.json() == {"message": "User registered successfully"}
+    data = response.json()
+    assert data["message"] == "User registered successfully"
+    assert isinstance(data["user_id"], int)
 
     async def fetch_user():
         async with async_session() as session:
-            result = await session.exec(select(ClientUser).where(ClientUser.phone_number == "987"))
+            result = await session.exec(select(ClientUser).where(ClientUser.phone == "987"))
             return result.first()
 
     user = asyncio.run(fetch_user())

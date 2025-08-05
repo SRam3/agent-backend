@@ -1,16 +1,19 @@
 from typing import Optional, List
 from datetime import datetime, timezone
+import hashlib
+from sqlalchemy import Column, JSON
 from sqlmodel import SQLModel, Field, Relationship
 
 
 class Client(SQLModel, table=True):
     __tablename__ = "clients"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     industry: Optional[str] = None
-    config: Optional[dict] = Field(default=None)
-    password: Optional[str] = None  # Must be hashed
+    config: Optional[dict] = Field(default=None, sa_column=Column(JSON, name="config"))
+    password: Optional[str] = Field(default=None, description="Hashed password")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     users: List["ClientUser"] = Relationship(back_populates="client")
@@ -19,17 +22,24 @@ class Client(SQLModel, table=True):
     leads: List["Lead"] = Relationship(back_populates="client")
     orders: List["Order"] = Relationship(back_populates="client")
 
+    def set_password(self, raw_password: str) -> None:
+        """Hash and store the client's password."""
+        self.password = hashlib.sha256(raw_password.encode()).hexdigest()
+
 
 class ClientUser(SQLModel, table=True):
     __tablename__ = "client_users"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    client_id: int = Field(foreign_key="clients.id")
+    user_id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="clients.client_id")
     name: str
     phone: str
     email: Optional[str] = None
     address: Optional[str] = None
-    metadata: Optional[dict] = Field(default=None)
+    metadata_: Optional[dict] = Field(
+        default=None, sa_column=Column("metadata", JSON), alias="metadata"
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     client: Optional[Client] = Relationship(back_populates="users")
@@ -40,10 +50,11 @@ class ClientUser(SQLModel, table=True):
 
 class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    client_id: int = Field(foreign_key="clients.id")
-    user_id: int = Field(foreign_key="client_users.id")
+    conversation_id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="clients.client_id")
+    user_id: int = Field(foreign_key="client_users.user_id")
     started_at: datetime = Field(default_factory=datetime.utcnow)
     status: str  # open, pending, closed
 
@@ -54,11 +65,12 @@ class Conversation(SQLModel, table=True):
 
 class Message(SQLModel, table=True):
     __tablename__ = "messages"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    conversation_id: int = Field(foreign_key="conversations.id")
-    client_id: int = Field(foreign_key="clients.id")
-    sender: str  # whatsapp_user, client, agent
+    message_id: Optional[int] = Field(default=None, primary_key=True)
+    conversation_id: int = Field(foreign_key="conversations.conversation_id")
+    client_id: int = Field(foreign_key="clients.client_id")
+    sender: str  # whatsapp user, client, agent
     direction: str  # inbound, outbound
     content: str
     content_type: str = "text"  # or image, audio, etc.
@@ -69,11 +81,14 @@ class Message(SQLModel, table=True):
 
 class Lead(SQLModel, table=True):
     __tablename__ = "leads"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    client_id: int = Field(foreign_key="clients.id")
-    user_id: int = Field(foreign_key="client_users.id")
-    conversation_id: Optional[int] = Field(default=None, foreign_key="conversations.id")
+    lead_id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="clients.client_id")
+    user_id: int = Field(foreign_key="client_users.user_id")
+    conversation_id: Optional[int] = Field(
+        default=None, foreign_key="conversations.conversation_id"
+    )
     status: str  # new, interested, negotiating, closed_won, closed_lost
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -84,11 +99,12 @@ class Lead(SQLModel, table=True):
 
 class Order(SQLModel, table=True):
     __tablename__ = "orders"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    client_id: int = Field(foreign_key="clients.id")
-    user_id: int = Field(foreign_key="client_users.id")
-    product_id: int = Field(foreign_key="products.id")
+    order_id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="clients.client_id")
+    user_id: int = Field(foreign_key="client_users.user_id")
+    product_id: int = Field(foreign_key="products.product_id")
     quantity: int
     status: str  # pending, paid, delivered, etc.
     total: float
@@ -101,14 +117,17 @@ class Order(SQLModel, table=True):
 
 class Product(SQLModel, table=True):
     __tablename__ = "products"
+    __table_args__ = {"extend_existing": True}
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    client_id: int = Field(foreign_key="clients.id")
+    product_id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: int = Field(foreign_key="clients.client_id")
     name: str
     description: Optional[str] = None
     price: float
     image_url: Optional[str] = None
-    metadata: Optional[dict] = Field(default=None, sa_column_kwargs={"type_": "jsonb"})
+    metadata_: Optional[dict] = Field(
+        default=None, sa_column=Column("metadata", JSON), alias="metadata"
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     client: Optional[Client] = Relationship(back_populates="products")

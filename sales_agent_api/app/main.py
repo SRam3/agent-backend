@@ -10,7 +10,7 @@ from .models import ClientUser, Client
 
 class UserRegisterRequest(BaseModel):
     name: str
-    phone_number: str
+    phone: str
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -30,9 +30,9 @@ async def health_check():
     return {"status": "ok", "message": "Backend reachable by LLM"}
 
 
-@app.get("/users/by-phone/{phone_number}")
+@app.get("/users/by-phone/{phone}")
 async def user_by_phone(
-    phone_number: str, session: AsyncSession = Depends(get_session)
+    phone: str, session: AsyncSession = Depends(get_session)
 ):
     """Lookup a client user by their WhatsApp phone number."""
 
@@ -40,7 +40,7 @@ async def user_by_phone(
         select(ClientUser)
         .join(Client)
         .where(Client.name == "cafe arenillo")
-        .where(ClientUser.phone_number == phone_number)
+        .where(ClientUser.phone == phone)
     )
     result = await session.exec(statement)
     user = result.first()
@@ -49,7 +49,7 @@ async def user_by_phone(
         return {
             "exists": True,
             "name": user.name,
-            "user_id": user.id,
+            "user_id": user.user_id,
             "client_id": user.client_id,
         }
 
@@ -78,19 +78,19 @@ async def register_user(
     # 2. Check if user already exists (by phone + client)
     statement = select(ClientUser).where(
         ClientUser.phone == user.phone,
-        ClientUser.client_id == client.id
+        ClientUser.client_id == client.client_id
     )
     result = await session.exec(statement)
     existing_user = result.first()
     if existing_user:
-        return {"message": "User already registered", "user_id": existing_user.id}
+        return {"message": "User already registered", "user_id": existing_user.user_id}
 
     # 3. Otherwise, create user
     new_user = ClientUser(
-        name=user.name, phone=user.phone, client_id=client.id
+        name=user.name, phone=user.phone, client_id=client.client_id
     )
     session.add(new_user)
     await session.commit()
     await session.refresh(new_user)
-    return {"message": "User registered successfully", "user_id": new_user.id}
+    return {"message": "User registered successfully", "user_id": new_user.user_id}
 
