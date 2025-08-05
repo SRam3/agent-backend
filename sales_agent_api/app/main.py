@@ -65,7 +65,7 @@ async def register_user(
 ):
     """Register a new user for the cafe arenillo client."""
 
-    # Fetch the cafe client or create it if missing
+    # 1. Fetch the cafe client or create it if missing
     statement = select(Client).where(Client.name == "cafe arenillo")
     result = await session.exec(statement)
     client = result.first()
@@ -75,10 +75,22 @@ async def register_user(
         await session.commit()
         await session.refresh(client)
 
+    # 2. Check if user already exists (by phone + client)
+    statement = select(ClientUser).where(
+        ClientUser.phone == user.phone,
+        ClientUser.client_id == client.id
+    )
+    result = await session.exec(statement)
+    existing_user = result.first()
+    if existing_user:
+        return {"message": "User already registered", "user_id": existing_user.id}
+
+    # 3. Otherwise, create user
     new_user = ClientUser(
-        name=user.name, phone_number=user.phone_number, client_id=client.id
+        name=user.name, phone=user.phone, client_id=client.id
     )
     session.add(new_user)
     await session.commit()
-    return {"message": "User registered successfully"}
+    await session.refresh(new_user)
+    return {"message": "User registered successfully", "user_id": new_user.id}
 
