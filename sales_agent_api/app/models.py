@@ -9,7 +9,7 @@ class Client(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     industry: Optional[str] = None
-    config: Optional[dict] = Field(default=None, sa_column_kwargs={"type_": "JSON"})
+    config: Optional[dict] = Field(default=None)
     password: Optional[str] = None  # Must be hashed
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -29,7 +29,7 @@ class ClientUser(SQLModel, table=True):
     phone: str
     email: Optional[str] = None
     address: Optional[str] = None
-    metadata: Optional[dict] = Field(default=None, sa_column_kwargs={"type_": "JSON"})
+    metadata: Optional[dict] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     client: Optional[Client] = Relationship(back_populates="users")
