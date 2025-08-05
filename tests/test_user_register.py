@@ -68,7 +68,7 @@ def test_register_user(monkeypatch):
     asyncio.run(populate())
 
     client = TestClient(app)
-    payload = {"name": "Bob", "phone_number": "987"}
+    payload = {"name": "Bob", "phone": "987"}
     response = client.post("/users/register", json=payload)
     assert response.status_code == 201
     assert response.json() == {"message": "User registered successfully"}
