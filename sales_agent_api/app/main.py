@@ -55,7 +55,7 @@ async def user_by_phone(
 
     return {
         "exists": False,
-        "message": "Please ask the user for their name to continue.",
+        "message": "Cliente desconocido en la base de datos, extrae su nombre",
     }
 
 
