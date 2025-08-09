@@ -100,5 +100,5 @@ def test_user_not_found(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "exists": False,
-        "message": "Please ask the user for their name to continue.",
+        "message": "Cliente desconocido en la base de datos, extrae su nombre",
     }
