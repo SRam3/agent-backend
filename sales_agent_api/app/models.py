@@ -1,7 +1,7 @@
 from typing import Optional, List
 from datetime import datetime, timezone
 import hashlib
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, String
 from sqlmodel import SQLModel, Field, Relationship
 
 
@@ -13,7 +13,7 @@ class Client(SQLModel, table=True):
     name: str
     industry: Optional[str] = None
     config: Optional[dict] = Field(default=None, sa_column=Column(JSON, name="config"))
-    password: Optional[str] = Field(default=None, description="Hashed password")
+    password_hash: Optional[str] = Field(default=None, sa_column=Column("password_hash", String) ,description="Hashed password")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     users: List["ClientUser"] = Relationship(back_populates="client")
