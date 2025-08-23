@@ -1,15 +1,20 @@
 from typing import Optional, List
 from datetime import datetime, timezone
-import hashlib
+from uuid import UUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy import Column, JSON, String
 from sqlmodel import SQLModel, Field, Relationship
+import hashlib
 
 
 class Client(SQLModel, table=True):
     __tablename__ = "clients"
     __table_args__ = {"extend_existing": True}
 
-    client_id: Optional[int] = Field(default=None, primary_key=True)
+    client_id: Optional[UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True)
+    )
     name: str
     industry: Optional[str] = None
     config: Optional[dict] = Field(default=None, sa_column=Column(JSON, name="config"))
@@ -32,7 +37,13 @@ class ClientUser(SQLModel, table=True):
     __table_args__ = {"extend_existing": True}
 
     user_id: Optional[int] = Field(default=None, primary_key=True)
-    client_id: int = Field(foreign_key="clients.client_id")
+    client_id: UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("clients.client_id"),  
+            nullable=False
+        )
+    )
     name: str
     phone: str
     email: Optional[str] = None
