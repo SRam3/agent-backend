@@ -2,7 +2,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from uuid import UUID
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy import Column, JSON, String
+from sqlalchemy import Column, JSON, String, ForeignKey
 from sqlmodel import SQLModel, Field, Relationship
 import hashlib
 
