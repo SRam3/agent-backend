@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 import importlib
 import asyncio
+from uuid import uuid4 
 
 # Ensure the sales_agent_api package is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -62,26 +63,29 @@ def test_user_found(monkeypatch):
 
     async def populate():
         async with async_session() as session:
-            client = Client(client_id=1, name="cafe arenillo")
+            client = Client(name="cafe arenillo")
             session.add(client)
             await session.commit()
-            user = ClientUser(name="Alice", phone="123", client_id=1)
+            await session.refresh(client)
+
+            user = ClientUser(name="Laura", phone="123", client_id=client.client_id)
             session.add(user)
             await session.commit()
             await session.refresh(user)
-            return user.user_id
+            return user.id, client.client_id
 
-    user_id = asyncio.run(populate())
+
+    user_id, client_uuid = asyncio.run(populate())
 
     client = TestClient(app)
     response = client.get("/users/by-phone/123")
     assert response.status_code == 200
-    assert response.json() == {
-        "exists": True,
-        "name": "Alice",
-        "user_id": user_id,
-        "client_id": 1,
-    }
+
+    payload = response.json()
+    assert payload["exists"] is True
+    assert payload["name"] == "Laura"
+    assert payload["user_id"] == user_id
+    assert str(payload["client_id"]) == str(client_uuid)
 
 
 def test_user_not_found(monkeypatch):
@@ -89,14 +93,14 @@ def test_user_not_found(monkeypatch):
 
     async def populate():
         async with async_session() as session:
-            client = Client(client_id=1, name="cafe arenillo")
+            client = Client(name="cafe arenillo")
             session.add(client)
             await session.commit()
 
     asyncio.run(populate())
 
-    client = TestClient(app)
-    response = client.get("/users/by-phone/999")
+    client_http = TestClient(app)
+    response = client_http.get("/users/by-phone/999")
     assert response.status_code == 200
     assert response.json() == {
         "exists": False,
