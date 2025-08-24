@@ -29,9 +29,10 @@ vault must contain the following secrets:
 - `DBHOST`
 - `DBNAME`
 
-If `KEY_VAULT_URL` is **not** provided, credentials must instead come from the
-following environment variables. The application supports both the .env file and 
-system environment variables using the standardized Key Vault-compatible names:
+If `KEY_VAULT_URL` is **not** provided, credentials can come from the
+following environment variables. The application supports both the `.env` file
+and system environment variables using the standardized Key Vault-compatible
+names:
 - `DBUSERNAME`
 - `DBPASSWORD`
 - `DBHOST`
@@ -48,6 +49,11 @@ DBPASSWORD=your-pass
 DBHOST=localhost
 DBNAME=testdb
 ```
+
+If neither Key Vault secrets nor the environment variables above are provided,
+the application falls back to a local SQLite database stored in
+`./sales_agent.db`. This is convenient for quick development or testing
+scenarios where running a full PostgreSQL instance is unnecessary.
 
 ## API Endpoints
 
