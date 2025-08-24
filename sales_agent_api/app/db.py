@@ -12,38 +12,43 @@ from azure.keyvault.secrets import SecretClient
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
-def _load_db_settings():
-    """Load database credentials from Azure Key Vault or fallback to environment variables."""
+def _build_database_url() -> str:
+    """Determine the database URL.
+
+    Preference order:
+    1. Azure Key Vault secrets if ``KEY_VAULT_URL`` is provided.
+    2. Environment variables (``DBUSERNAME`` etc.).
+    3. Local SQLite file for simple development setups.
+    """
 
     vault_url = os.getenv("KEY_VAULT_URL")
     if vault_url:
-        credential = DefaultAzureCredential()
-        client = SecretClient(vault_url=vault_url, credential=credential)
+        try:
+            credential = DefaultAzureCredential()
+            client = SecretClient(vault_url=vault_url, credential=credential)
+            username = client.get_secret("DBUSERNAME").value
+            password = client.get_secret("DBPASSWORD").value
+            host = client.get_secret("DBHOST").value
+            name = client.get_secret("DBNAME").value
+            return f"postgresql+asyncpg://{username}:{password}@{host}/{name}"
+        except Exception:
+            # Fall back to other sources
+            pass
 
-        username = client.get_secret("DBUSERNAME").value
-        password = client.get_secret("DBPASSWORD").value  
-        host = client.get_secret("DBHOST").value
-        name = client.get_secret("DBNAME").value
-    else:
-        # local environment variable names
-        username = os.getenv("DBUSERNAME")
-        password = os.getenv("DBPASSWORD")
-        host = os.getenv("DBHOST")
-        name = os.getenv("DBNAME")
+    username = os.getenv("DBUSERNAME")
+    password = os.getenv("DBPASSWORD")
+    host = os.getenv("DBHOST")
+    name = os.getenv("DBNAME")
+    if all([username, password, host, name]):
+        return f"postgresql+asyncpg://{username}:{password}@{host}/{name}"
 
-        if not all([username, password, host, name]):
-            raise RuntimeError(
-                "Database credentials not found. Provide KEY_VAULT_URL or set "
-                "DBUSERNAME, DBPASSWORD, DBHOST, and DBNAME as environment variables."
-            )
-
-    return username, password, host, name
+    # Fallback to a local SQLite database so the API can function without
+    # external configuration.  The file is created in the current working
+    # directory if it does not exist.
+    return "sqlite+aiosqlite:///./sales_agent.db"
 
 
-DBUSERNAME, DBPASSWORD, DBHOST, DBNAME = _load_db_settings()
-
-# Build connection string
-DATABASE_URL = f"postgresql+asyncpg://{DBUSERNAME}:{DBPASSWORD}@{DBHOST}/{DBNAME}"
+DATABASE_URL = _build_database_url()
 
 # Async engine setup
 engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=True, future=True)
