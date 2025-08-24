@@ -22,10 +22,12 @@ def _build_database_url() -> str:
     """
 
     vault_url = os.getenv("KEY_VAULT_URL")
+
     if vault_url:
         try:
             credential = DefaultAzureCredential()
             client = SecretClient(vault_url=vault_url, credential=credential)
+<<<<<<< HEAD
             username = client.get_secret("DBUSERNAME").value
             password = client.get_secret("DBPASSWORD").value
             host = client.get_secret("DBHOST").value
@@ -46,6 +48,31 @@ def _build_database_url() -> str:
     # external configuration.  The file is created in the current working
     # directory if it does not exist.
     return "sqlite+aiosqlite:///./sales_agent.db"
+=======
+
+            username = client.get_secret("DBUSERNAME").value
+            password = client.get_secret("DBPASSWORD").value
+            host = client.get_secret("DBHOST").value
+            name = client.get_secret("DBNAME").value
+        except Exception:
+            username = password = host = name = None
+    else:
+        username = password = host = name = None
+
+    if not all([username, password, host, name]):
+        username = username or os.getenv("DBUSERNAME")
+        password = password or os.getenv("DBPASSWORD")
+        host = host or os.getenv("DBHOST")
+        name = name or os.getenv("DBNAME")
+
+    if not all([username, password, host, name]):
+        raise RuntimeError(
+            "Database credentials not found. Provide KEY_VAULT_URL or set "
+            "DBUSERNAME, DBPASSWORD, DBHOST, and DBNAME as environment variables."
+        )
+
+    return username, password, host, name
+>>>>>>> origin/main
 
 
 DATABASE_URL = _build_database_url()
