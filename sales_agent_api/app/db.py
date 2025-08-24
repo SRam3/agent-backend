@@ -16,26 +16,32 @@ def _load_db_settings():
     """Load database credentials from Azure Key Vault or fallback to environment variables."""
 
     vault_url = os.getenv("KEY_VAULT_URL")
+
     if vault_url:
-        credential = DefaultAzureCredential()
-        client = SecretClient(vault_url=vault_url, credential=credential)
+        try:
+            credential = DefaultAzureCredential()
+            client = SecretClient(vault_url=vault_url, credential=credential)
 
-        username = client.get_secret("DBUSERNAME").value
-        password = client.get_secret("DBPASSWORD").value  
-        host = client.get_secret("DBHOST").value
-        name = client.get_secret("DBNAME").value
+            username = client.get_secret("DBUSERNAME").value
+            password = client.get_secret("DBPASSWORD").value
+            host = client.get_secret("DBHOST").value
+            name = client.get_secret("DBNAME").value
+        except Exception:
+            username = password = host = name = None
     else:
-        # local environment variable names
-        username = os.getenv("DBUSERNAME")
-        password = os.getenv("DBPASSWORD")
-        host = os.getenv("DBHOST")
-        name = os.getenv("DBNAME")
+        username = password = host = name = None
 
-        if not all([username, password, host, name]):
-            raise RuntimeError(
-                "Database credentials not found. Provide KEY_VAULT_URL or set "
-                "DBUSERNAME, DBPASSWORD, DBHOST, and DBNAME as environment variables."
-            )
+    if not all([username, password, host, name]):
+        username = username or os.getenv("DBUSERNAME")
+        password = password or os.getenv("DBPASSWORD")
+        host = host or os.getenv("DBHOST")
+        name = name or os.getenv("DBNAME")
+
+    if not all([username, password, host, name]):
+        raise RuntimeError(
+            "Database credentials not found. Provide KEY_VAULT_URL or set "
+            "DBUSERNAME, DBPASSWORD, DBHOST, and DBNAME as environment variables."
+        )
 
     return username, password, host, name
 
