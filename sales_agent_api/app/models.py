@@ -1,6 +1,6 @@
 from typing import Optional, List
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy import Column, JSON, String, ForeignKey
 from sqlmodel import SQLModel, Field, Relationship
@@ -11,8 +11,8 @@ class Client(SQLModel, table=True):
     __tablename__ = "clients"
     __table_args__ = {"extend_existing": True}
 
-    client_id: Optional[UUID] = Field(
-        default=None,
+    client_id: UUID = Field(
+        default_factory=uuid4,
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True)
     )
     name: str
@@ -57,6 +57,10 @@ class ClientUser(SQLModel, table=True):
     conversations: List["Conversation"] = Relationship(back_populates="user")
     leads: List["Lead"] = Relationship(back_populates="user")
     orders: List["Order"] = Relationship(back_populates="user")
+
+    @property
+    def id(self) -> Optional[int]:
+        return self.user_id
 
 
 class Conversation(SQLModel, table=True):
