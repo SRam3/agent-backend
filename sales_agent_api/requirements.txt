@@ -1,9 +1,11 @@
-fastapi
-uvicorn
-sqlmodel
+fastapi>=0.111
+uvicorn[standard]
+sqlalchemy[asyncio]>=2.0
 asyncpg
-aiosqlite
+pydantic>=2.0
 python-dotenv
-httpx>=0.23,<0.25
 azure-identity
 azure-keyvault-secrets
+pytest
+pytest-asyncio
+httpx
