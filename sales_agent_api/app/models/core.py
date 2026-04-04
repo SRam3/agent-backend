@@ -61,9 +61,9 @@ class Client(Base):
     )
 
     # relationships
-    client_users: Mapped[list["ClientUser"]] = relationship(back_populates="client")
-    products: Mapped[list["Product"]] = relationship(back_populates="client")
-    conversations: Mapped[list["Conversation"]] = relationship(back_populates="client")
+    client_users: Mapped[list["ClientUser"]] = relationship("ClientUser", back_populates="client")
+    products: Mapped[list["Product"]] = relationship("Product", back_populates="client")
+    conversations: Mapped[list["Conversation"]] = relationship("Conversation", back_populates="client", foreign_keys="[Conversation.client_id]")
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +141,8 @@ class Product(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    client: Mapped["Client"] = relationship(back_populates="products")
-    order_line_items: Mapped[list["OrderLineItem"]] = relationship(back_populates="product")
+    client: Mapped["Client"] = relationship("Client", back_populates="products", foreign_keys=[client_id])
+    order_line_items: Mapped[list["OrderLineItem"]] = relationship("OrderLineItem", back_populates="product")
 
 
 # ---------------------------------------------------------------------------
@@ -204,15 +204,15 @@ class Conversation(Base):
     last_strategy_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     strategy_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
 
-    client: Mapped["Client"] = relationship(back_populates="conversations")
-    client_user: Mapped["ClientUser"] = relationship(back_populates="conversations")
-    messages: Mapped[list["Message"]] = relationship(back_populates="conversation")
-    # avoid circular FK issue with lead_id / order_id — use string-based FK only
+    client: Mapped["Client"] = relationship("Client", back_populates="conversations", foreign_keys=[client_id])
+    client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="conversations", foreign_keys=[client_user_id])
+    messages: Mapped[list["Message"]] = relationship("Message", back_populates="conversation", foreign_keys="[Message.conversation_id]")
+    # One-way relationships to avoid circular back_populates issues
     lead: Mapped[Optional["Lead"]] = relationship(
-        foreign_keys=[lead_id], back_populates="source_conversation"
+        "Lead", foreign_keys=[lead_id], viewonly=True
     )
     order: Mapped[Optional["Order"]] = relationship(
-        foreign_keys=[order_id], back_populates="conversation"
+        "Order", foreign_keys=[order_id], viewonly=True
     )
 
 
@@ -254,11 +254,11 @@ class Lead(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    client_user: Mapped["ClientUser"] = relationship(back_populates="leads")
+    client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="leads", foreign_keys=[client_user_id])
     source_conversation: Mapped[Optional["Conversation"]] = relationship(
-        foreign_keys=[source_conversation_id], back_populates="lead"
+        "Conversation", foreign_keys=[source_conversation_id], viewonly=True
     )
-    orders: Mapped[list["Order"]] = relationship(back_populates="lead")
+    orders: Mapped[list["Order"]] = relationship("Order", back_populates="lead", foreign_keys="[Order.lead_id]")
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +304,7 @@ class Message(Base):
     extracted_data: Mapped[Optional[dict]] = mapped_column(JSONB)
     backend_decision_reason: Mapped[Optional[str]] = mapped_column(Text)
 
-    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages", foreign_keys=[conversation_id])
 
 
 # ---------------------------------------------------------------------------
@@ -355,13 +355,13 @@ class Order(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    client_user: Mapped["ClientUser"] = relationship(back_populates="orders")
-    lead: Mapped[Optional["Lead"]] = relationship(back_populates="orders")
-    conversation: Mapped[Optional["Conversation"]] = relationship(
-        foreign_keys=[source_conversation_id], back_populates="order"
+    client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="orders", foreign_keys=[client_user_id])
+    lead: Mapped[Optional["Lead"]] = relationship("Lead", back_populates="orders", foreign_keys=[lead_id])
+    source_conversation: Mapped[Optional["Conversation"]] = relationship(
+        "Conversation", foreign_keys=[source_conversation_id], viewonly=True
     )
     line_items: Mapped[list["OrderLineItem"]] = relationship(
-        back_populates="order", cascade="all, delete-orphan"
+        "OrderLineItem", back_populates="order", cascade="all, delete-orphan"
     )
 
 
@@ -390,8 +390,8 @@ class OrderLineItem(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 
-    order: Mapped["Order"] = relationship(back_populates="line_items")
-    product: Mapped["Product"] = relationship(back_populates="order_line_items")
+    order: Mapped["Order"] = relationship("Order", back_populates="line_items", foreign_keys=[order_id])
+    product: Mapped["Product"] = relationship("Product", back_populates="order_line_items", foreign_keys=[product_id])
 
 
 # ---------------------------------------------------------------------------

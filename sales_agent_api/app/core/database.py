@@ -60,13 +60,25 @@ def _build_database_url() -> str:
 
 DATABASE_URL = _build_database_url()
 
+# asyncpg does not support ?sslmode= query param — pass ssl via connect_args
+_ssl_required = "sslmode=require" in DATABASE_URL or "ssl=require" in DATABASE_URL
+_clean_url = (
+    DATABASE_URL
+    .replace("?sslmode=require", "")
+    .replace("&sslmode=require", "")
+    .replace("?ssl=require", "")
+    .replace("&ssl=require", "")
+)
+_connect_args: dict = {"ssl": "require"} if _ssl_required else {}
+
 engine = create_async_engine(
-    DATABASE_URL,
+    _clean_url,
     echo=os.getenv("ENV", "dev") == "dev",
     pool_size=5,
     max_overflow=10,
     pool_recycle=3600,
     pool_pre_ping=True,
+    connect_args=_connect_args,
 )
 
 AsyncSessionLocal = sessionmaker(

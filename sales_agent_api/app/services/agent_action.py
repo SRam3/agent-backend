@@ -208,6 +208,8 @@ async def process_agent_action(
         backend_decision_reason=backend_decision_reason,
     )
     session.add(out_message)
+    # Flush first to populate out_message.id before writing audit log
+    await session.flush()
 
     # Audit the agent turn
     session.add(
