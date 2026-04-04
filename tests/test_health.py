@@ -1,108 +1,118 @@
-from fastapi.testclient import TestClient
-from unittest import mock
+"""Tests for GET /health and auth middleware."""
+import asyncio
+import os
 import sys
-from pathlib import Path
-import importlib
 
-# Ensure the sales_agent_api package is on the path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pytest
+
+# Ensure the sales_agent_api package is importable
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../sales_agent_api"))
 
 
-def test_health_endpoint(monkeypatch):
-    """Verify the health endpoint without hitting Azure."""
+def _reload_app(monkeypatch):
+    """Helper: set env vars and reimport app.main cleanly."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/test")
+    monkeypatch.setenv("SALES_AI_SERVICE_TOKEN", "test-token-ci")
+    monkeypatch.setenv("ENV", "dev")
 
-    monkeypatch.setenv("KEY_VAULT_URL", "https://fake.vault.azure.net/")
+    # Drop cached modules so env vars are picked up
+    for mod in list(sys.modules.keys()):
+        if mod.startswith("app"):
+            del sys.modules[mod]
 
-    class DummySecret:
-        def __init__(self, value):
-            self.value = value
+    from app.main import app  # noqa: F811
+    return app
 
-    def fake_get_secret(name):
-        mapping = {
-            "DBUSERNAME": DummySecret("user"),
-            "DBPASSWORD": DummySecret("pass"), 
-            "DBHOST": DummySecret("localhost"),
-            "DBNAME": DummySecret("testdb"),
-        }
-        return mapping[name]
 
-    with mock.patch("azure.keyvault.secrets.SecretClient") as sc, mock.patch(
-        "azure.identity.DefaultAzureCredential"
-    ):
-        sc.return_value.get_secret.side_effect = fake_get_secret
+def test_health_returns_ok(monkeypatch):
+    """GET /health → 200 {"status": "ok"}"""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
 
-        import sales_agent_api.app.db as db
-        importlib.reload(db)
+    application = _reload_app(monkeypatch)
 
-        async def dummy_init_db():
-            pass
-
-        db.init_db = dummy_init_db
-
-        from sales_agent_api.app.main import app
-
-        client = TestClient(app)
-        response = client.get("/health")
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.get("/health")
         assert response.status_code == 200
-        assert response.json() == {
-            "status": "ok",
-            "message": "Backend reachable by LLM",
-        }
+        assert response.json()["status"] == "ok"
+
+    asyncio.run(_run())
 
 
-def test_health_endpoint_local_env(monkeypatch):
-    """Verify the health endpoint using local environment variables."""
+def test_health_requires_no_auth(monkeypatch):
+    """Health endpoint is public — no Authorization header needed."""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
 
-    monkeypatch.delenv("KEY_VAULT_URL", raising=False)
-    monkeypatch.setenv("DBUSERNAME", "user")
-    monkeypatch.setenv("DBPASSWORD", "pass")
-    monkeypatch.setenv("DBHOST", "localhost")
-    monkeypatch.setenv("DBNAME", "testdb")
+    application = _reload_app(monkeypatch)
 
-    import sales_agent_api.app.db as db
-    import importlib
-    importlib.reload(db)
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.get("/health")
+        assert response.status_code == 200
 
-    async def dummy_init_db():
-        pass
-
-    db.init_db = dummy_init_db
-
-    from sales_agent_api.app.main import app
-
-    client = TestClient(app)
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "message": "Backend reachable by LLM",
-    }
+    asyncio.run(_run())
 
 
-def test_health_endpoint_dotenv(monkeypatch):
-    """Verify credentials are loaded from the packaged .env file."""
+def test_api_endpoint_returns_401_without_auth(monkeypatch):
+    """POST /api/v1/ingest/message without auth header → 401."""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
 
-    monkeypatch.delenv("KEY_VAULT_URL", raising=False)
-    monkeypatch.delenv("DBUSERNAME", raising=False)
-    monkeypatch.delenv("DBPASSWORD", raising=False)
-    monkeypatch.delenv("DBHOST", raising=False)
-    monkeypatch.delenv("DBNAME", raising=False)
+    application = _reload_app(monkeypatch)
 
-    import sales_agent_api.app.db as db
-    import importlib
-    importlib.reload(db)
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.post("/api/v1/ingest/message", json={})
+        assert response.status_code == 401
 
-    async def dummy_init_db():
-        pass
+    asyncio.run(_run())
 
-    db.init_db = dummy_init_db
 
-    from sales_agent_api.app.main import app
+def test_api_endpoint_returns_401_with_wrong_token(monkeypatch):
+    """POST /api/v1/ingest/message with wrong token → 401."""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
 
-    client = TestClient(app)
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "message": "Backend reachable by LLM",
-    }
+    application = _reload_app(monkeypatch)
+
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/ingest/message",
+                json={},
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+        assert response.status_code == 401
+
+    asyncio.run(_run())
+
+
+def test_api_endpoint_returns_400_without_client_id(monkeypatch):
+    """Correct token but missing X-Client-ID → 400."""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
+
+    application = _reload_app(monkeypatch)
+
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/ingest/message",
+                json={},
+                headers={"Authorization": "Bearer test-token-ci"},
+            )
+        assert response.status_code == 400
+
+    asyncio.run(_run())
