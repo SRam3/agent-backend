@@ -1,0 +1,40 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "sales_agent_api/**"
+      - "tests/**"
+  pull_request:
+    paths:
+      - "sales_agent_api/**"
+      - "tests/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r sales_agent_api/requirements.txt
+
+      - name: Run GoalStrategyEngine tests (pure Python, no DB)
+        run: |
+          pytest tests/services/test_goal_strategy.py -v
+
+      - name: Run health endpoint tests
+        env:
+          SALES_AI_SERVICE_TOKEN: test-token-ci
+          ENV: dev
+          # Use a dummy DATABASE_URL — health check doesn't need real DB
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+        run: |
+          pytest tests/test_health.py -v --ignore-glob="*integration*"
