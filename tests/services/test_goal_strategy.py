@@ -109,6 +109,24 @@ def test_07_order_created_targets_user_confirmed():
 # 8: all complete
 # ---------------------------------------------------------------------------
 
+def test_07b_user_confirmed_targets_payment():
+    """With user_confirmation set, target payment_confirmed."""
+    d = engine.compute(
+        "close_sale",
+        {
+            "intent": "comprar",
+            "product_id": "abc",
+            "full_name": "Juan",
+            "shipping_address": "Calle 10",
+            "shipping_city": "Manizales",
+            "order_id": "order-uuid",
+            "user_confirmation": True,
+        },
+    )
+    assert d.current_checkpoint == "payment_confirmed"
+    assert "payment_confirmation" in d.missing_fields
+
+
 def test_08_all_complete_returns_100():
     """When all fields are present, progress should be 100% and all_complete=True."""
     d = engine.compute(
@@ -121,6 +139,7 @@ def test_08_all_complete_returns_100():
             "shipping_city": "Manizales",
             "order_id": "order-uuid",
             "user_confirmation": True,
+            "payment_confirmation": True,
         },
     )
     assert d.all_complete is True
@@ -196,6 +215,7 @@ def test_14_progress_100_when_all_complete():
             "shipping_city": "Manizales",
             "order_id": "order-uuid",
             "user_confirmation": True,
+            "payment_confirmation": True,
         },
     )
     assert d.progress_pct == 100

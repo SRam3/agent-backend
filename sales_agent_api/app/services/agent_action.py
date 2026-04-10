@@ -50,6 +50,14 @@ INFORMATIONAL_ACTIONS = {
     "modify_order",
 }
 
+# Fields from extracted_data that should be persisted to conversation.extracted_context
+# so the GoalStrategyEngine can track progress across turns.
+STRATEGY_FIELDS = {
+    "intent", "product_id", "full_name", "identification_number",
+    "email", "shipping_address", "shipping_city",
+    "user_confirmation", "payment_confirmation",
+}
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -148,6 +156,22 @@ async def process_agent_action(
     elif proposed_action in INFORMATIONAL_ACTIONS:
         action_approved = True
         backend_decision_reason = f"informational_action: {proposed_action} (pass-through)"
+
+    # --- 3b. Persist strategy-relevant extracted_data to extracted_context ----
+    if extracted_data:
+        strategy_updates = {
+            k: v for k, v in extracted_data.items()
+            if k in STRATEGY_FIELDS and v
+        }
+        if strategy_updates:
+            new_context = {**(conversation.extracted_context or {}), **strategy_updates}
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation.id)
+                .values(extracted_context=new_context)
+            )
+            conversation.extracted_context = new_context
+            side_effects.append(f"context_updated:{list(strategy_updates.keys())}")
 
     # --- 4. Validate + apply proposed_transition -----------------------------
     if proposed_transition and proposed_transition != current_state:
