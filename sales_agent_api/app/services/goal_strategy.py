@@ -153,6 +153,15 @@ def _build_close_sale_checkpoints(business_rules: dict) -> list[Checkpoint]:
         )
     )
 
+    checkpoints.append(
+        Checkpoint(
+            name="payment_confirmed",
+            label="Payment confirmed",
+            required_fields=["payment_confirmation"],
+            blocked_by=["user_confirmed"],
+        )
+    )
+
     return checkpoints
 
 
@@ -291,5 +300,6 @@ class GoalStrategyEngine:
             "shipping_city": "Ask for the customer's city.",
             "order_id": "Present the order summary and ask the customer to confirm.",
             "user_confirmation": "Ask the customer to confirm the order explicitly (yes/no).",
+            "payment_confirmation": "Share payment methods and ask the customer to confirm once payment is made.",
         }
         return prompts.get(field, f"Ask for the customer's {field.replace('_', ' ')}.")

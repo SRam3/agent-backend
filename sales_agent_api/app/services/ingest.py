@@ -30,8 +30,10 @@ from app.models.core import (
     ClientUser,
     Conversation,
     Message,
+    Product,
 )
 from app.services.goal_strategy import GoalStrategyEngine
+from app.services.prompt_context import format_business_context, format_conversation_summary
 from app.services.state_machine import get_available_actions
 
 logger = logging.getLogger(__name__)
@@ -227,6 +229,24 @@ async def ingest_message(
 
     await session.flush()
 
+    # --- Load product catalog -------------------------------------------------
+    products_rows = await session.execute(
+        select(Product)
+        .where(Product.client_id == client_id, Product.is_available.is_(True))
+        .order_by(Product.name)
+    )
+    product_catalog = [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "description": p.description,
+            "sku": p.sku,
+            "price": float(p.price),
+            "ai_description": p.ai_description,
+        }
+        for p in products_rows.scalars().all()
+    ]
+
     # --- Build recent messages list (last 20) --------------------------------
     recent_rows = await session.execute(
         select(Message)
@@ -274,6 +294,18 @@ async def ingest_message(
             "has_city": bool(client_user.city),
             "is_blocked": client_user.is_blocked,
         },
+        "product_catalog": product_catalog,
+        "business_context": format_business_context(business_rules, product_catalog),
+        "conversation_summary": format_conversation_summary(
+            user_context={
+                "display_name": client_user.display_name,
+                "has_full_name": bool(client_user.full_name),
+                "has_email": bool(client_user.email),
+                "has_address": bool(client_user.address),
+                "has_city": bool(client_user.city),
+            },
+            extracted_context=collected_data,
+        ),
         "recent_messages": recent_messages,
     }
 
