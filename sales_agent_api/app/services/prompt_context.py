@@ -33,6 +33,7 @@ def format_business_context(
             if desc:
                 lines.append(f"  {desc}")
         lines.append("Only mention the price if the customer asks or shows real interest.")
+        lines.append("You can ONLY sell products listed above. NEVER invent or mention products not in this catalog.")
         sections.append("\n".join(lines))
 
     # --- Shipping rules ---
