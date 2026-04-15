@@ -43,6 +43,9 @@ class IngestMessageResponse(BaseModel):
     available_actions: list[str]
     client_config: dict
     user_context: dict
+    product_catalog: list[dict] = []
+    business_context: str = ""
+    conversation_summary: str = ""
     recent_messages: list[dict]
 
 
