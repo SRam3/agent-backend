@@ -56,6 +56,7 @@ def test_business_context_includes_product():
     assert "Café Arenillo" in result
     assert "CAFE-001" in result
     assert "$40.000 COP" in result
+    assert "ONLY sell products listed above" in result
 
 
 def test_business_context_includes_shipping():
