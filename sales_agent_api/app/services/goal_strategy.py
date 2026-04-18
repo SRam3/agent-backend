@@ -48,42 +48,32 @@ class StrategyDirective:
     all_complete: bool
 
     def to_prompt(self) -> str:
-        """Format the directive as a text block for injection into the LLM system prompt."""
+        """Format the directive as a soft hint for the LLM system prompt.
+
+        The directive suggests what info to collect next, but never overrides
+        the customer's current question.  The agent must answer the customer
+        first, then steer toward the goal only when the moment feels natural.
+        """
         bar_filled = int(self.progress_pct / 10)
         bar = "█" * bar_filled + "░" * (10 - bar_filled)
 
         lines = [
-            f"CURRENT GOAL: {self.goal}",
-            f"PROGRESS: [{bar}] {self.progress_pct}%",
+            f"SALES PROGRESS: [{bar}] {self.progress_pct}%",
         ]
 
         if self.all_complete:
-            lines += [
-                "CURRENT STEP: All steps complete",
-                "YOUR TASK THIS TURN: The sale is complete. Confirm with the customer and close politely.",
-            ]
+            lines.append(
+                "All purchase info is collected. If natural, confirm with the customer and close politely.",
+            )
         else:
-            lines += [
-                f"CURRENT STEP: {self.current_checkpoint_label}",
-                f"YOUR TASK THIS TURN: {self.next_action}",
-            ]
-
-        if self.missing_fields:
-            lines.append("INFORMATION STILL NEEDED:")
-            for f in self.missing_fields:
-                lines.append(f"  • {f}")
-
-        if self.completed_checkpoints:
-            lines.append("COMPLETED:")
-            for cp in self.completed_checkpoints:
-                lines.append(f"  ✓ {cp}")
+            lines.append(f"NEXT INFO NEEDED: {', '.join(self.missing_fields)}")
+            lines.append(
+                f"HINT: If the moment feels natural, {self.next_action.lower()}",
+            )
 
         lines += [
-            "RULES:",
-            "- Focus on collecting the missing information listed above",
-            "- Do NOT skip ahead to later steps",
-            "- Do NOT ask for multiple pieces of information at once",
-            "- NEVER invent or assume information the customer hasn't provided",
+            "But ALWAYS answer the customer's current question first.",
+            "Never interrupt a customer question to collect data.",
         ]
 
         return "\n".join(lines)
@@ -291,15 +281,15 @@ class GoalStrategyEngine:
 
         field = missing_fields[0]
         prompts = {
-            "intent": "Ask what the customer is looking for today.",
+            "intent": "Try to understand what the customer is looking for.",
             "product_id": "Help the customer choose a product from the catalog.",
-            "full_name": "Ask for the customer's full name naturally.",
+            "full_name": "Try to learn the customer's name.",
             "identification_number": "Ask for the customer's ID number.",
-            "email": "Ask for the customer's email address.",
-            "shipping_address": "Ask for the customer's delivery address.",
-            "shipping_city": "Ask for the customer's city.",
-            "order_id": "Present the order summary and ask the customer to confirm.",
-            "user_confirmation": "Ask the customer to confirm the order explicitly (yes/no).",
+            "email": "Ask for the customer's email.",
+            "shipping_address": "Try to learn the delivery address.",
+            "shipping_city": "Try to learn the customer's city.",
+            "order_id": "Present an order summary so the backend can create the order.",
+            "user_confirmation": "Ask the customer to confirm the order.",
             "payment_confirmation": "Share payment methods and ask the customer to confirm once payment is made.",
         }
         return prompts.get(field, f"Ask for the customer's {field.replace('_', ' ')}.")

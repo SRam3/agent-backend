@@ -225,11 +225,11 @@ def test_14_progress_100_when_all_complete():
 # 15–17: to_prompt() formatting
 # ---------------------------------------------------------------------------
 
-def test_15_prompt_contains_goal():
+def test_15_prompt_contains_progress():
     d = engine.compute("close_sale", {})
     prompt = d.to_prompt()
-    assert "close_sale" in prompt
-    assert "CURRENT GOAL" in prompt
+    assert "SALES PROGRESS" in prompt
+    assert "HINT" in prompt
 
 
 def test_16_prompt_contains_progress_bar():
@@ -243,13 +243,12 @@ def test_16_prompt_contains_progress_bar():
 def test_17_prompt_lists_missing_fields():
     d = engine.compute("close_sale", {})
     prompt = d.to_prompt()
-    assert "INFORMATION STILL NEEDED" in prompt
+    assert "NEXT INFO NEEDED" in prompt
     assert "intent" in prompt
 
 
-def test_18_prompt_lists_completed_with_checkmark():
+def test_18_prompt_answers_customer_first():
     d = engine.compute("close_sale", {"intent": "comprar"})
     prompt = d.to_prompt()
-    assert "COMPLETED" in prompt
-    assert "✓" in prompt
-    assert "intent_identified" in prompt
+    assert "ALWAYS answer the customer" in prompt
+    assert "Never interrupt" in prompt
