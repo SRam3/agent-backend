@@ -14,6 +14,7 @@ Performs 10 operations in a single database transaction:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -196,6 +197,42 @@ async def ingest_message(
     )
     conversation.message_count += 1
     conversation.last_message_at = now
+
+    # --- 8b. Rapid-fire debounce ---------------------------------------------
+    # Flush to persist the message, then commit to release the advisory lock
+    # so other messages from the same user can be inserted. Sleep briefly,
+    # then check if a newer inbound arrived — if so, let that one respond.
+    await session.flush()
+    await session.commit()
+    await asyncio.sleep(3)
+
+    newer_msg = await session.execute(
+        select(Message.id)
+        .where(
+            Message.conversation_id == conversation.id,
+            Message.direction == "inbound",
+            Message.created_at > msg_timestamp,
+        )
+        .limit(1)
+    )
+    if newer_msg.scalar_one_or_none() is not None:
+        logger.info(
+            "Debounce: newer message exists, skipping response for %s",
+            chakra_message_id,
+        )
+        return {"should_respond": False, "reason": "debounce"}
+
+    # Re-acquire advisory lock for the rest of the processing
+    lock_key2 = int(hashlib.sha1(str(conversation.id).encode()).hexdigest(), 16) % (2**63)
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key2}
+    )
+
+    # Reload conversation state (may have changed during sleep)
+    conv_row2 = await session.execute(
+        select(Conversation).where(Conversation.id == conversation.id)
+    )
+    conversation = conv_row2.scalar_one()
 
     # --- 9. Compute strategy -------------------------------------------------
     business_rules: dict = client.business_rules or {}
