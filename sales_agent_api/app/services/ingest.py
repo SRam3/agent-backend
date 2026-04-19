@@ -204,7 +204,7 @@ async def ingest_message(
     # then check if a newer inbound arrived — if so, let that one respond.
     await session.flush()
     await session.commit()
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
     newer_msg = await session.execute(
         select(Message.id)
