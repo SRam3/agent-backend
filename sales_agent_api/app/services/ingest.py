@@ -243,6 +243,7 @@ async def ingest_message(
             "sku": p.sku,
             "price": float(p.price),
             "ai_description": p.ai_description,
+            "image_url": p.image_url,
         }
         for p in products_rows.scalars().all()
     ]

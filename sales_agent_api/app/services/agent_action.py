@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import (
     AuditLog,
+    Client,
     ClientUser,
     Conversation,
     Lead,
@@ -29,6 +30,7 @@ from app.models.core import (
     OrderLineItem,
     Product,
 )
+from app.services.goal_strategy import GoalStrategyEngine
 from app.services.state_machine import (
     InvalidActionError,
     InvalidTransitionError,
@@ -172,6 +174,46 @@ async def process_agent_action(
             )
             conversation.extracted_context = new_context
             side_effects.append(f"context_updated:{list(strategy_updates.keys())}")
+
+    # --- 3c. Auto-escalate when all purchase data is collected ----------------
+    if conversation.state != "human_handoff":
+        client_row = await session.execute(
+            select(Client).where(Client.id == client_id)
+        )
+        client = client_row.scalar_one_or_none()
+        business_rules = (client.business_rules or {}) if client else {}
+        collected_data = conversation.extracted_context or {}
+        goal = conversation.active_goal or business_rules.get("default_goal", "close_sale")
+        engine = GoalStrategyEngine()
+        directive = engine.compute(goal, collected_data, business_rules)
+        if directive.all_complete:
+            old_state = conversation.state
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation.id)
+                .values(
+                    state="human_handoff",
+                    previous_state=old_state,
+                    escalation_reason="Todos los datos de compra recopilados — listo para intervención humana",
+                )
+            )
+            conversation.state = "human_handoff"
+            session.add(
+                AuditLog(
+                    client_id=client_id,
+                    event_type="auto_escalated",
+                    entity_type="conversation",
+                    entity_id=conversation.id,
+                    actor_type="system",
+                    old_value={"state": old_state},
+                    new_value={"state": "human_handoff", "reason": "purchase_data_complete"},
+                )
+            )
+            side_effects.append("escalated:purchase_data_complete")
+            logger.info(
+                "Auto-escalated conversation %s: all checkpoints complete",
+                conversation.id,
+            )
 
     # --- 4. Validate + apply proposed_transition -----------------------------
     if proposed_transition and proposed_transition != current_state:
