@@ -134,6 +134,7 @@ class Product(Base):
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     ai_description: Mapped[Optional[str]] = mapped_column(Text)
+    image_url: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
