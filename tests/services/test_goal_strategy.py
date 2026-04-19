@@ -51,7 +51,7 @@ def test_04_qualified_targets_shipping():
     """With intent + product + name, target shipping_info_collected."""
     d = engine.compute(
         "close_sale",
-        {"intent": "comprar", "product_id": "abc", "full_name": "Juan"},
+        {"intent": "comprar", "product_id": "abc", "full_name": "Juan", "phone": "3001234567"},
     )
     assert d.current_checkpoint == "shipping_info_collected"
     assert "shipping_address" in d.missing_fields or "shipping_city" in d.missing_fields
@@ -64,7 +64,7 @@ def test_05_shipping_address_but_missing_city():
         {
             "intent": "comprar",
             "product_id": "abc",
-            "full_name": "Juan",
+            "full_name": "Juan", "phone": "3001234567",
             "shipping_address": "Calle 10",
         },
     )
@@ -79,7 +79,7 @@ def test_06_full_shipping_targets_order_created():
         {
             "intent": "comprar",
             "product_id": "abc",
-            "full_name": "Juan",
+            "full_name": "Juan", "phone": "3001234567",
             "shipping_address": "Calle 10",
             "shipping_city": "Manizales",
         },
@@ -95,7 +95,7 @@ def test_07_order_created_targets_user_confirmed():
         {
             "intent": "comprar",
             "product_id": "abc",
-            "full_name": "Juan",
+            "full_name": "Juan", "phone": "3001234567",
             "shipping_address": "Calle 10",
             "shipping_city": "Manizales",
             "order_id": "order-uuid",
@@ -116,7 +116,7 @@ def test_07b_user_confirmed_targets_payment():
         {
             "intent": "comprar",
             "product_id": "abc",
-            "full_name": "Juan",
+            "full_name": "Juan", "phone": "3001234567",
             "shipping_address": "Calle 10",
             "shipping_city": "Manizales",
             "order_id": "order-uuid",
@@ -134,7 +134,7 @@ def test_08_all_complete_returns_100():
         {
             "intent": "comprar",
             "product_id": "abc",
-            "full_name": "Juan",
+            "full_name": "Juan", "phone": "3001234567",
             "shipping_address": "Calle 10",
             "shipping_city": "Manizales",
             "order_id": "order-uuid",
@@ -210,7 +210,7 @@ def test_14_progress_100_when_all_complete():
         {
             "intent": "comprar",
             "product_id": "abc",
-            "full_name": "Juan",
+            "full_name": "Juan", "phone": "3001234567",
             "shipping_address": "Calle 10",
             "shipping_city": "Manizales",
             "order_id": "order-uuid",

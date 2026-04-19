@@ -102,7 +102,7 @@ def _build_close_sale_checkpoints(business_rules: dict) -> list[Checkpoint]:
 
     # lead_qualified checkpoint — may be skipped by business rule
     if not business_rules.get("skip_lead_qualification", False):
-        lead_fields = ["full_name"]
+        lead_fields = ["full_name", "phone"]
         if business_rules.get("require_id_number", False):
             lead_fields.append("identification_number")
         if business_rules.get("require_email", False):
@@ -287,10 +287,11 @@ class GoalStrategyEngine:
             "full_name": "Try to learn the customer's name.",
             "identification_number": "Ask for the customer's ID number.",
             "email": "Ask for the customer's email.",
-            "shipping_address": "Try to learn the delivery address.",
+            "phone": "Try to learn the customer's phone number for the carrier.",
+            "shipping_address": "Try to learn the full delivery address (neighborhood, street, number, apartment).",
             "shipping_city": "Try to learn the customer's city.",
             "order_id": "Present an order summary so the backend can create the order.",
             "user_confirmation": "Ask the customer to confirm the order.",
-            "payment_confirmation": "Share payment methods and ask the customer to confirm once payment is made.",
+            "payment_confirmation": "Share payment methods and ask the customer to send payment receipt once paid.",
         }
         return prompts.get(field, f"Ask for the customer's {field.replace('_', ' ')}.")

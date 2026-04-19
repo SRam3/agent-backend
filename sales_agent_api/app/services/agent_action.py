@@ -56,7 +56,7 @@ INFORMATIONAL_ACTIONS = {
 # so the GoalStrategyEngine can track progress across turns.
 STRATEGY_FIELDS = {
     "intent", "product_id", "full_name", "identification_number",
-    "email", "shipping_address", "shipping_city",
+    "email", "phone", "shipping_address", "shipping_city",
     "user_confirmation", "payment_confirmation",
 }
 
@@ -165,16 +165,26 @@ async def process_agent_action(
             k: v for k, v in extracted_data.items()
             if k in STRATEGY_FIELDS and v
         }
-        # Enforce DAG order: don't accept confirmation fields without shipping address
+        # Enforce DAG order: don't accept later-stage fields without prerequisites
         if strategy_updates:
             current_context = conversation.extracted_context or {}
             merged = {**current_context, **strategy_updates}
-            if "user_confirmation" in strategy_updates and not merged.get("shipping_address"):
-                del strategy_updates["user_confirmation"]
-                logger.warning("Rejected user_confirmation: shipping_address missing")
-            if "payment_confirmation" in strategy_updates and not merged.get("user_confirmation"):
-                del strategy_updates["payment_confirmation"]
-                logger.warning("Rejected payment_confirmation: user_confirmation missing")
+            # user_confirmation requires full_name AND shipping_address
+            if "user_confirmation" in strategy_updates:
+                if not merged.get("shipping_address") or not merged.get("full_name"):
+                    del strategy_updates["user_confirmation"]
+                    logger.warning(
+                        "Rejected user_confirmation: missing %s",
+                        [f for f in ("full_name", "shipping_address") if not merged.get(f)],
+                    )
+            # payment_confirmation requires user_confirmation AND shipping_address
+            if "payment_confirmation" in strategy_updates:
+                if not merged.get("user_confirmation") or not merged.get("shipping_address"):
+                    del strategy_updates["payment_confirmation"]
+                    logger.warning(
+                        "Rejected payment_confirmation: missing %s",
+                        [f for f in ("user_confirmation", "shipping_address") if not merged.get(f)],
+                    )
         if strategy_updates:
             new_context = {**(conversation.extracted_context or {}), **strategy_updates}
             await session.execute(
