@@ -148,6 +148,22 @@ async def ingest_message(
         )
         session.add(conversation)
         await session.flush()  # get the generated id
+    else:
+        # Reset extracted_context if conversation has been idle for 30+ minutes
+        # to prevent stale data from a previous interaction polluting the new one
+        idle_minutes = (now - (conversation.last_message_at or conversation.created_at)).total_seconds() / 60
+        if idle_minutes >= 30 and conversation.extracted_context:
+            logger.info(
+                "Resetting extracted_context for conversation %s (idle %.0f min)",
+                conversation.id, idle_minutes,
+            )
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation.id)
+                .values(extracted_context={}, state="active")
+            )
+            conversation.extracted_context = {}
+            conversation.state = "active"
 
     # --- 6. Advisory lock on conversation ------------------------------------
     lock_key = int(hashlib.sha1(str(conversation.id).encode()).hexdigest(), 16) % (2**63)
