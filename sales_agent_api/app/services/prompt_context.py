@@ -34,15 +34,18 @@ def format_business_context(
                 lines.append(f"  {desc}")
         lines.append("Only mention the price if the customer asks or shows real interest.")
         lines.append("You can ONLY sell products listed above. NEVER invent or mention products not in this catalog.")
+        if any(p.get("image_url") for p in product_catalog):
+            lines.append("If the customer asks for a photo/image, include the product image_url in extracted_data as 'send_image_url'.")
         sections.append("\n".join(lines))
 
     # --- Shipping rules ---
     shipping_rules = business_rules.get("shipping_rules")
     if shipping_rules:
-        lines = ["SHIPPING RULES:"]
+        lines = ["SHIPPING RULES (all values are approximate, pending carrier confirmation):"]
+        currency = business_rules.get("currency", "COP")
         for city, rule in shipping_rules.items():
-            if city == "international":
-                lines.append(f"- International: {rule}")
+            if city in ("international", "zones"):
+                continue
             elif city == "other":
                 method = rule.get("method", "")
                 cost_note = rule.get("cost_note", "")
@@ -52,10 +55,20 @@ def format_business_context(
                 cost = rule.get("cost")
                 cost_note = rule.get("cost_note", "")
                 if cost is not None:
-                    currency = business_rules.get("currency", "COP")
-                    lines.append(f"- {city}: {method} {_format_price(cost, currency)}")
+                    lines.append(f"- {city}: {method} aprox. {_format_price(cost, currency)}")
                 else:
                     lines.append(f"- {city}: {method}, {cost_note}")
+        # Render zones for cities not explicitly listed
+        zones = shipping_rules.get("zones")
+        if zones:
+            lines.append("SHIPPING ZONES (for cities not listed above):")
+            for zone_name, zone_info in zones.items():
+                if isinstance(zone_info, dict):
+                    cost = zone_info.get("cost_range", zone_info.get("cost_note", ""))
+                    lines.append(f"- {zone_name}: {zone_info.get('method', 'transportadora')}, aprox. {cost}")
+        international = shipping_rules.get("international")
+        if international:
+            lines.append(f"- International: {international}")
         sections.append("\n".join(lines))
 
     # --- Payment methods ---
