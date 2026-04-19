@@ -250,5 +250,5 @@ def test_17_prompt_lists_missing_fields():
 def test_18_prompt_answers_customer_first():
     d = engine.compute("close_sale", {"intent": "comprar"})
     prompt = d.to_prompt()
-    assert "ALWAYS answer the customer" in prompt
-    assert "Never interrupt" in prompt
+    assert "warm, natural conversation" in prompt
+    assert "Do NOT mention or push toward the next step" in prompt
