@@ -165,6 +165,16 @@ async def process_agent_action(
             k: v for k, v in extracted_data.items()
             if k in STRATEGY_FIELDS and v
         }
+        # Enforce DAG order: don't accept confirmation fields without shipping address
+        if strategy_updates:
+            current_context = conversation.extracted_context or {}
+            merged = {**current_context, **strategy_updates}
+            if "user_confirmation" in strategy_updates and not merged.get("shipping_address"):
+                del strategy_updates["user_confirmation"]
+                logger.warning("Rejected user_confirmation: shipping_address missing")
+            if "payment_confirmation" in strategy_updates and not merged.get("user_confirmation"):
+                del strategy_updates["payment_confirmation"]
+                logger.warning("Rejected payment_confirmation: user_confirmation missing")
         if strategy_updates:
             new_context = {**(conversation.extracted_context or {}), **strategy_updates}
             await session.execute(

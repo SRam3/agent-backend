@@ -68,12 +68,13 @@ class StrategyDirective:
         else:
             lines.append(f"NEXT INFO NEEDED: {', '.join(self.missing_fields)}")
             lines.append(
-                f"HINT: If the moment feels natural, {self.next_action.lower()}",
+                f"HINT (low priority, only when the conversation flows there naturally): {self.next_action.lower()}",
             )
 
         lines += [
-            "But ALWAYS answer the customer's current question first.",
-            "Never interrupt a customer question to collect data.",
+            "IMPORTANT: Your priority is to have a warm, natural conversation. Answer what the customer asks.",
+            "Do NOT mention or push toward the next step unless the customer brings it up.",
+            "Never end a message with 'puedo ayudarte con el pedido' or similar sales push.",
         ]
 
         return "\n".join(lines)

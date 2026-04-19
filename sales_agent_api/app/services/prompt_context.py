@@ -32,10 +32,12 @@ def format_business_context(
             lines.append(f"- {p['name']} ({p.get('sku', 'N/A')}): {price}")
             if desc:
                 lines.append(f"  {desc}")
+            if p.get("image_url"):
+                lines.append(f"  image_url: {p['image_url']}")
         lines.append("Only mention the price if the customer asks or shows real interest.")
         lines.append("You can ONLY sell products listed above. NEVER invent or mention products not in this catalog.")
         if any(p.get("image_url") for p in product_catalog):
-            lines.append("If the customer asks for a photo/image, include the product image_url in extracted_data as 'send_image_url'.")
+            lines.append("IMAGES: If the customer asks for a photo/image of a product, you MUST set extracted_data.send_image_url to the product's image_url shown above. The system will send the image automatically.")
         sections.append("\n".join(lines))
 
     # --- Shipping rules ---
