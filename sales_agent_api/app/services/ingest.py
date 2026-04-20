@@ -35,7 +35,6 @@ from app.models.core import (
 )
 from app.services.goal_strategy import GoalStrategyEngine
 from app.services.prompt_context import format_business_context, format_conversation_summary
-from app.services.state_machine import get_available_actions
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +331,6 @@ async def ingest_message(
             "missing_fields": directive.missing_fields,
         },
         "strategy_version": new_strategy_version,
-        "available_actions": get_available_actions(conversation.state),
         "client_config": {
             "system_prompt_template": client.system_prompt_template or "",
             "ai_model": client.ai_model,
