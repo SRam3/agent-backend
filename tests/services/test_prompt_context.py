@@ -120,9 +120,9 @@ def test_summary_with_display_name():
 def test_summary_with_extracted_context():
     result = format_conversation_summary(
         {},
-        {"intent": "comprar café", "full_name": "Juan Pérez", "shipping_city": "Manizales"},
+        {"product_id": "abc-uuid", "full_name": "Juan Pérez", "shipping_city": "Manizales"},
     )
-    assert "intent: comprar café" in result
+    assert "product_id: abc-uuid" in result
     assert "full_name: Juan Pérez" in result
     assert "shipping_city: Manizales" in result
 
@@ -140,10 +140,10 @@ def test_summary_with_profile_flags():
 def test_summary_combines_profile_and_context():
     result = format_conversation_summary(
         {"display_name": "Juan", "has_full_name": True},
-        {"intent": "comprar", "product_id": "abc"},
+        {"product_id": "abc", "phone": "3001234567"},
     )
     assert "Juan" in result
-    assert "intent: comprar" in result
+    assert "phone: 3001234567" in result
     assert "product_id: abc" in result
 
 
