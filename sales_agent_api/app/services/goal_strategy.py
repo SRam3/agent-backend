@@ -84,19 +84,17 @@ class StrategyDirective:
 # Goal definitions
 # ---------------------------------------------------------------------------
 def _build_close_sale_checkpoints(business_rules: dict) -> list[Checkpoint]:
-    """Build the close_sale DAG, applying client-specific overrides."""
+    """Build the close_sale DAG, applying client-specific overrides.
+
+    Intent is implicit: if the customer reaches product_matched, they expressed
+    buying interest. No separate intent_identified checkpoint.
+    """
     checkpoints = [
-        Checkpoint(
-            name="intent_identified",
-            label="Intent identified",
-            required_fields=["intent"],
-            blocked_by=[],
-        ),
         Checkpoint(
             name="product_matched",
             label="Product matched",
             required_fields=["product_id"],
-            blocked_by=["intent_identified"],
+            blocked_by=[],
         ),
     ]
 
@@ -112,11 +110,11 @@ def _build_close_sale_checkpoints(business_rules: dict) -> list[Checkpoint]:
                 name="lead_qualified",
                 label="Lead qualified",
                 required_fields=lead_fields,
-                blocked_by=["intent_identified"],
+                blocked_by=[],
             )
         )
 
-    shipping_blocked_by = ["lead_qualified"] if not business_rules.get("skip_lead_qualification", False) else ["intent_identified"]
+    shipping_blocked_by = ["lead_qualified"] if not business_rules.get("skip_lead_qualification", False) else []
     checkpoints.append(
         Checkpoint(
             name="shipping_info_collected",
@@ -128,19 +126,10 @@ def _build_close_sale_checkpoints(business_rules: dict) -> list[Checkpoint]:
 
     checkpoints.append(
         Checkpoint(
-            name="order_created",
-            label="Order created",
-            required_fields=["order_id"],
-            blocked_by=["product_matched", "shipping_info_collected"],
-        )
-    )
-
-    checkpoints.append(
-        Checkpoint(
             name="user_confirmed",
             label="User confirmed",
             required_fields=["user_confirmation"],
-            blocked_by=["order_created"],
+            blocked_by=["product_matched", "shipping_info_collected"],
         )
     )
 
@@ -282,7 +271,6 @@ class GoalStrategyEngine:
 
         field = missing_fields[0]
         prompts = {
-            "intent": "Try to understand what the customer is looking for.",
             "product_id": "Help the customer choose a product from the catalog.",
             "full_name": "Try to learn the customer's name.",
             "identification_number": "Ask for the customer's ID number.",
@@ -290,8 +278,7 @@ class GoalStrategyEngine:
             "phone": "Try to learn the customer's phone number for the carrier.",
             "shipping_address": "Try to learn the full delivery address (neighborhood, street, number, apartment).",
             "shipping_city": "Try to learn the customer's city.",
-            "order_id": "Present an order summary so the backend can create the order.",
-            "user_confirmation": "Ask the customer to confirm the order.",
+            "user_confirmation": "Present an order summary with all the collected data and ask the customer to confirm.",
             "payment_confirmation": "Share payment methods and ask the customer to send payment receipt once paid.",
         }
         return prompts.get(field, f"Ask for the customer's {field.replace('_', ' ')}.")

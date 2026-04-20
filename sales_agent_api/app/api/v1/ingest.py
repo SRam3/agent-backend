@@ -40,7 +40,6 @@ class IngestMessageResponse(BaseModel):
     strategy_directive: str
     strategy_meta: dict
     strategy_version: int
-    available_actions: list[str]
     client_config: dict
     user_context: dict
     product_catalog: list[dict] = []
@@ -91,7 +90,6 @@ async def ingest_message_endpoint(
             strategy_directive="",
             strategy_meta={},
             strategy_version=0,
-            available_actions=[],
             client_config={},
             user_context={},
             recent_messages=[],

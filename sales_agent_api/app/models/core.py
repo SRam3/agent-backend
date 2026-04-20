@@ -107,8 +107,6 @@ class ClientUser(Base):
 
     client: Mapped["Client"] = relationship(back_populates="client_users")
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="client_user")
-    leads: Mapped[list["Lead"]] = relationship(back_populates="client_user")
-    orders: Mapped[list["Order"]] = relationship(back_populates="client_user")
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +141,6 @@ class Product(Base):
     )
 
     client: Mapped["Client"] = relationship("Client", back_populates="products", foreign_keys=[client_id])
-    order_line_items: Mapped[list["OrderLineItem"]] = relationship("OrderLineItem", back_populates="product")
 
 
 # ---------------------------------------------------------------------------
@@ -168,12 +165,6 @@ class Conversation(Base):
     extracted_context: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    lead_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("leads.id")
-    )
-    order_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id")
-    )
     assigned_operator_id: Mapped[Optional[str]] = mapped_column(String(100))
     escalation_reason: Mapped[Optional[str]] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(
@@ -184,9 +175,6 @@ class Conversation(Base):
     )
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     message_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
-    agent_turn_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -208,58 +196,6 @@ class Conversation(Base):
     client: Mapped["Client"] = relationship("Client", back_populates="conversations", foreign_keys=[client_id])
     client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="conversations", foreign_keys=[client_user_id])
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="conversation", foreign_keys="[Message.conversation_id]")
-    # One-way relationships to avoid circular back_populates issues
-    lead: Mapped[Optional["Lead"]] = relationship(
-        "Lead", foreign_keys=[lead_id], viewonly=True
-    )
-    order: Mapped[Optional["Order"]] = relationship(
-        "Order", foreign_keys=[order_id], viewonly=True
-    )
-
-
-# ---------------------------------------------------------------------------
-# leads
-# ---------------------------------------------------------------------------
-class Lead(Base):
-    __tablename__ = "leads"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()")
-    )
-    client_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
-    )
-    client_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("client_users.id"), nullable=False
-    )
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default=text("'new'")
-    )
-    intent: Mapped[Optional[str]] = mapped_column(String(255))
-    score: Mapped[Optional[int]] = mapped_column(Integer)
-    qualification_data: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
-    source_conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id")
-    )
-    assigned_to: Mapped[Optional[str]] = mapped_column(String(100))
-    qualified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    won_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    lost_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    lost_reason: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-
-    client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="leads", foreign_keys=[client_user_id])
-    source_conversation: Mapped[Optional["Conversation"]] = relationship(
-        "Conversation", foreign_keys=[source_conversation_id], viewonly=True
-    )
-    orders: Mapped[list["Order"]] = relationship("Order", back_populates="lead", foreign_keys="[Order.lead_id]")
 
 
 # ---------------------------------------------------------------------------
@@ -306,93 +242,6 @@ class Message(Base):
     backend_decision_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages", foreign_keys=[conversation_id])
-
-
-# ---------------------------------------------------------------------------
-# orders
-# ---------------------------------------------------------------------------
-class Order(Base):
-    __tablename__ = "orders"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()")
-    )
-    client_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
-    )
-    client_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("client_users.id"), nullable=False
-    )
-    lead_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("leads.id")
-    )
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default=text("'draft'")
-    )
-    shipping_name: Mapped[Optional[str]] = mapped_column(String(255))
-    shipping_address: Mapped[Optional[str]] = mapped_column(Text)
-    shipping_city: Mapped[Optional[str]] = mapped_column(String(100))
-    shipping_phone: Mapped[Optional[str]] = mapped_column(String(20))
-    subtotal: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default=text("0")
-    )
-    shipping_cost: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default=text("0")
-    )
-    total: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False, server_default=text("0")
-    )
-    source_conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id")
-    )
-    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    cancel_reason: Mapped[Optional[str]] = mapped_column(Text)
-    notes: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-
-    client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="orders", foreign_keys=[client_user_id])
-    lead: Mapped[Optional["Lead"]] = relationship("Lead", back_populates="orders", foreign_keys=[lead_id])
-    source_conversation: Mapped[Optional["Conversation"]] = relationship(
-        "Conversation", foreign_keys=[source_conversation_id], viewonly=True
-    )
-    line_items: Mapped[list["OrderLineItem"]] = relationship(
-        "OrderLineItem", back_populates="order", cascade="all, delete-orphan"
-    )
-
-
-# ---------------------------------------------------------------------------
-# order_line_items
-# ---------------------------------------------------------------------------
-class OrderLineItem(Base):
-    __tablename__ = "order_line_items"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()")
-    )
-    order_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
-    )
-    product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("products.id"), nullable=False
-    )
-    product_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    quantity: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("1")
-    )
-    subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=text("now()")
-    )
-
-    order: Mapped["Order"] = relationship("Order", back_populates="line_items", foreign_keys=[order_id])
-    product: Mapped["Product"] = relationship("Product", back_populates="order_line_items", foreign_keys=[product_id])
 
 
 # ---------------------------------------------------------------------------
