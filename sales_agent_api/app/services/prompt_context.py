@@ -38,7 +38,7 @@ def format_business_context(
         lines.append("You can ONLY sell products listed above. NEVER invent or mention products not in this catalog.")
         lines.append("PRODUCT_ID RULE: extracted_data.product_id MUST be the 'id' UUID shown above, NEVER the sku.")
         if any(p.get("image_url") for p in product_catalog):
-            lines.append("IMAGES: If the customer asks for a photo/image of a product, you MUST set extracted_data.send_image_url to the product's image_url shown above. The system will send the image automatically.")
+            lines.append("IMAGES: Send the product photo ONCE per conversation. Only set extracted_data.send_image_url the FIRST time the customer asks to see the product. If you already sent the image earlier in this conversation, do NOT include send_image_url again, even if the customer keeps talking about the product.")
         sections.append("\n".join(lines))
 
     # --- Shipping rules ---
