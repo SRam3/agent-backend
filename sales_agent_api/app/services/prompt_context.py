@@ -29,13 +29,14 @@ def format_business_context(
         for p in product_catalog:
             price = _format_price(p.get("price", 0), currency)
             desc = p.get("ai_description") or p.get("description") or ""
-            lines.append(f"- {p['name']} ({p.get('sku', 'N/A')}): {price}")
+            lines.append(f"- {p['name']} (id: {p['id']}, sku: {p.get('sku', 'N/A')}): {price}")
             if desc:
                 lines.append(f"  {desc}")
             if p.get("image_url"):
                 lines.append(f"  image_url: {p['image_url']}")
         lines.append("Only mention the price if the customer asks or shows real interest.")
         lines.append("You can ONLY sell products listed above. NEVER invent or mention products not in this catalog.")
+        lines.append("PRODUCT_ID RULE: extracted_data.product_id MUST be the 'id' UUID shown above, NEVER the sku.")
         if any(p.get("image_url") for p in product_catalog):
             lines.append("IMAGES: If the customer asks for a photo/image of a product, you MUST set extracted_data.send_image_url to the product's image_url shown above. The system will send the image automatically.")
         sections.append("\n".join(lines))
@@ -130,8 +131,8 @@ def format_conversation_summary(
         known.append("city: on file")
 
     # From extracted_context (conversation-level data)
-    for field in ("intent", "product_id", "full_name", "shipping_address",
-                  "shipping_city", "order_id", "user_confirmation",
+    for field in ("product_id", "full_name", "phone", "shipping_address",
+                  "shipping_city", "user_confirmation",
                   "payment_confirmation"):
         value = extracted_context.get(field)
         if value:
