@@ -71,7 +71,6 @@ async def ingest_message(
     content: str,
     display_name: Optional[str] = None,
     message_type: str = "text",
-    media_url: Optional[str] = None,
     timestamp: Optional[datetime] = None,
 ) -> dict:
     """Process an inbound WhatsApp message.
@@ -139,11 +138,15 @@ async def ingest_message(
     conversation: Optional[Conversation] = conv_row.scalar_one_or_none()
 
     if conversation is None:
+        # Pre-seed extracted_context from the persistent customer profile so
+        # the LLM starts a new conversation already knowing what we have on
+        # file (name, city, address, preferences, purchase history).
+        seeded_context = _seed_context_from_profile(client_user.profile or {})
         conversation = Conversation(
             client_id=client_id,
             client_user_id=client_user.id,
             state="active",
-            extracted_context={},
+            extracted_context=seeded_context,
             strategy_version=0,
         )
         session.add(conversation)
@@ -179,7 +182,6 @@ async def ingest_message(
         direction="inbound",
         message_type=message_type,
         content=content,
-        media_url=media_url,
         chakra_message_id=chakra_message_id,
         created_at=msg_timestamp,
     )
@@ -340,10 +342,7 @@ async def ingest_message(
         "user_context": {
             "display_name": client_user.display_name,
             "phone_number": _mask_phone(phone_number),
-            "has_full_name": bool(client_user.full_name),
-            "has_email": bool(client_user.email),
-            "has_address": bool(client_user.address),
-            "has_city": bool(client_user.city),
+            "profile": client_user.profile or {},
             "is_blocked": client_user.is_blocked,
         },
         "product_catalog": product_catalog,
@@ -351,15 +350,30 @@ async def ingest_message(
         "conversation_summary": format_conversation_summary(
             user_context={
                 "display_name": client_user.display_name,
-                "has_full_name": bool(client_user.full_name),
-                "has_email": bool(client_user.email),
-                "has_address": bool(client_user.address),
-                "has_city": bool(client_user.city),
+                "profile": client_user.profile or {},
             },
             extracted_context=collected_data,
         ),
         "recent_messages": recent_messages,
     }
+
+
+def _seed_context_from_profile(profile: dict) -> dict:
+    """Pull stable customer facts out of the profile into a fresh extracted_context
+    so the strategy engine already sees what we know from past conversations."""
+    if not profile:
+        return {}
+    seed: dict = {}
+    for src, dst in (
+        ("full_name", "full_name"),
+        ("email", "email"),
+        ("shipping_address", "shipping_address"),
+        ("city", "shipping_city"),
+        ("phone", "phone"),
+    ):
+        if profile.get(src):
+            seed[dst] = profile[src]
+    return seed
 
 
 def _mask_phone(phone: str) -> str:

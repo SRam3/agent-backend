@@ -29,7 +29,6 @@ class IngestMessageRequest(BaseModel):
     content: str
     display_name: Optional[str] = None
     message_type: str = "text"
-    media_url: Optional[str] = None
     timestamp: Optional[datetime] = None
 
 
@@ -74,7 +73,6 @@ async def ingest_message_endpoint(
             content=body.content,
             display_name=body.display_name,
             message_type=body.message_type,
-            media_url=body.media_url,
             timestamp=body.timestamp,
         )
         await session.commit()

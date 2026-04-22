@@ -8,7 +8,6 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
-    Column,
     ForeignKey,
     Integer,
     Numeric,
@@ -37,8 +36,6 @@ class Client(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    chakra_phone_number_id: Mapped[Optional[str]] = mapped_column(String(50))
-    chakra_secret_ref: Mapped[Optional[str]] = mapped_column(String(255))
     system_prompt_template: Mapped[Optional[str]] = mapped_column(Text)
     ai_model: Mapped[str] = mapped_column(
         String(100), nullable=False, server_default=text("'gpt-4o-mini'")
@@ -46,13 +43,9 @@ class Client(Base):
     ai_temperature: Mapped[Decimal] = mapped_column(
         Numeric(3, 2), nullable=False, server_default=text("0.3")
     )
-    max_tool_calls_per_turn: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("3")
-    )
     business_rules: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    message_retention_days: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -79,13 +72,13 @@ class ClientUser(Base):
         UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
     )
     phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
-    whatsapp_id: Mapped[Optional[str]] = mapped_column(String(50))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
-    email: Mapped[Optional[str]] = mapped_column(String(255))
-    full_name: Mapped[Optional[str]] = mapped_column(String(255))
-    address: Mapped[Optional[str]] = mapped_column(Text)
-    city: Mapped[Optional[str]] = mapped_column(String(100))
-    identification_number: Mapped[Optional[str]] = mapped_column(String(50))
+    # Persistent customer profile across conversations. Shape documented in
+    # migration 007: {first_name, full_name, email, city, shipping_address,
+    # preferences, purchase_count, purchases, last_conversation_summary}.
+    profile: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     first_contact_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
@@ -94,9 +87,6 @@ class ClientUser(Base):
     )
     is_blocked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
-    )
-    metadata_: Mapped[dict] = mapped_column(
-        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
@@ -128,9 +118,6 @@ class Product(Base):
     is_available: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
-    tags: Mapped[list] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[]'::jsonb")
-    )
     ai_description: Mapped[Optional[str]] = mapped_column(Text)
     image_url: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
@@ -161,19 +148,15 @@ class Conversation(Base):
     state: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default=text("'active'")
     )
-    previous_state: Mapped[Optional[str]] = mapped_column(String(30))
     extracted_context: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    assigned_operator_id: Mapped[Optional[str]] = mapped_column(String(100))
-    escalation_reason: Mapped[Optional[str]] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     last_message_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
-    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     message_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
@@ -218,28 +201,15 @@ class Message(Base):
         String(20), nullable=False, server_default=text("'text'")
     )
     content: Mapped[Optional[str]] = mapped_column(Text)
-    media_url: Mapped[Optional[str]] = mapped_column(String(2048))
-    media_mime_type: Mapped[Optional[str]] = mapped_column(String(100))
     chakra_message_id: Mapped[Optional[str]] = mapped_column(String(100), unique=True)
-    idempotency_key: Mapped[str] = mapped_column(
-        String(100), nullable=False, server_default=text("uuid_generate_v4()::text")
-    )
-    delivery_status: Mapped[Optional[str]] = mapped_column(String(20))
-    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     ai_model_used: Mapped[Optional[str]] = mapped_column(String(100))
     ai_prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer)
     ai_completion_tokens: Mapped[Optional[int]] = mapped_column(Integer)
     ai_latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
-    proposed_action: Mapped[Optional[str]] = mapped_column(String(50))
-    action_approved: Mapped[Optional[bool]] = mapped_column(Boolean)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
-    # decision explainability (migration 002)
-    proposed_action_payload: Mapped[Optional[dict]] = mapped_column(JSONB)
     extracted_data: Mapped[Optional[dict]] = mapped_column(JSONB)
-    backend_decision_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="messages", foreign_keys=[conversation_id])
 
@@ -260,10 +230,7 @@ class AuditLog(Base):
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    actor_id: Mapped[Optional[str]] = mapped_column(String(100))
-    old_value: Mapped[Optional[dict]] = mapped_column(JSONB)
     new_value: Mapped[Optional[dict]] = mapped_column(JSONB)
-    metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

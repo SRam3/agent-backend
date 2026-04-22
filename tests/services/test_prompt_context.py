@@ -127,22 +127,23 @@ def test_summary_with_extracted_context():
     assert "shipping_city: Manizales" in result
 
 
-def test_summary_with_profile_flags():
+def test_summary_with_profile_facts():
     result = format_conversation_summary(
-        {"has_full_name": True, "has_address": True, "has_email": False, "has_city": False},
+        {"profile": {"full_name": "Juan Pérez", "shipping_address": "Calle 10 #5-20"}},
         {},
     )
-    assert "full name: on file" in result
-    assert "address: on file" in result
+    assert "full name on file: Juan Pérez" in result
+    assert "shipping address on file: Calle 10 #5-20" in result
     assert "email" not in result
 
 
 def test_summary_combines_profile_and_context():
     result = format_conversation_summary(
-        {"display_name": "Juan", "has_full_name": True},
+        {"display_name": "Juan", "profile": {"full_name": "Juan Pérez", "purchase_count": 2}},
         {"product_id": "abc", "phone": "3001234567"},
     )
     assert "Juan" in result
+    assert "purchase count: 2" in result
     assert "phone: 3001234567" in result
     assert "product_id: abc" in result
 
