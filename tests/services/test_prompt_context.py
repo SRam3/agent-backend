@@ -182,6 +182,8 @@ def test_summary_all_complete():
         {},
         {
             "product_id": "abc",
+            "quantity": 4,
+            "grind_preference": "2 molidos y 2 en grano",
             "full_name": "Juan Pérez",
             "phone": "3001234567",
             "shipping_city": "Manizales",
@@ -192,6 +194,21 @@ def test_summary_all_complete():
     )
     assert "Todos los datos del pedido están completos" in result
     assert "✗" not in result
+
+
+def test_summary_shows_quantity_and_grind_when_collected():
+    result = format_conversation_summary(
+        {},
+        {"product_id": "abc", "quantity": 4, "grind_preference": "grano"},
+    )
+    assert "✓ Cantidad: 4" in result
+    assert "✓ Preferencia de molido: grano" in result
+
+
+def test_summary_missing_quantity_and_grind():
+    result = format_conversation_summary({}, {"product_id": "abc"})
+    assert "✗ cantidad (número de bolsas)" in result
+    assert "✗ preferencia de molido (grano/molido)" in result
 
 
 # ---------------------------------------------------------------------------
