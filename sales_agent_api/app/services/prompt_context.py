@@ -110,6 +110,8 @@ def format_business_context(
 # (clave en extracted_context, etiqueta humana, etiqueta corta para "FALTA").
 _ORDER_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("product_id",          "Producto",             "producto"),
+    ("quantity",            "Cantidad",             "cantidad (número de bolsas)"),
+    ("grind_preference",    "Preferencia de molido","preferencia de molido (grano/molido)"),
     ("full_name",           "Nombre completo",      "nombre completo"),
     ("phone",               "Teléfono",             "teléfono"),
     ("shipping_city",       "Ciudad",               "ciudad"),
