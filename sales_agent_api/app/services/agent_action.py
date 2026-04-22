@@ -4,10 +4,12 @@ After the LLM produces a response, n8n calls this service to:
   1. Persist strategy-relevant extracted_data into conversation.extracted_context
      (with DAG gates to enforce data order: user_confirmation needs
      name+phone+address+city; payment_confirmation needs user_confirmation+phone+address)
-  2. Auto-escalate to human_handoff when all purchase data is collected
-  3. Apply a proposed_transition if the LLM sends one (rare)
-  4. Persist the outbound message with AI metadata
-  5. Write audit log entries
+  2. Merge stable customer facts back into client_users.profile (persistent).
+  3. On payment_confirmation, bump profile.purchase_count + append purchase record.
+  4. Auto-escalate to human_handoff when all purchase data is collected.
+  5. Apply a proposed_transition if the LLM sends one (rare).
+  6. Persist the outbound message with AI metadata.
+  7. Write audit log entries.
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.core import AuditLog, Client, Conversation, Message
+from app.models.core import AuditLog, Client, ClientUser, Conversation, Message
 from app.services.goal_strategy import GoalStrategyEngine
 from app.services.state_machine import (
     InvalidTransitionError,
@@ -31,9 +33,20 @@ logger = logging.getLogger(__name__)
 # Fields from extracted_data that are persisted to conversation.extracted_context
 # so the GoalStrategyEngine can track progress across turns.
 STRATEGY_FIELDS = {
-    "product_id", "full_name", "identification_number",
-    "email", "phone", "shipping_address", "shipping_city",
+    "product_id", "full_name", "phone",
+    "shipping_address", "shipping_city",
     "user_confirmation", "payment_confirmation",
+}
+
+# Subset of extracted_context fields that describe the person, not the
+# in-flight order — these get merged back to client_users.profile so the
+# next conversation starts already knowing them.
+PROFILE_PERSIST_MAP = {
+    "full_name": "full_name",
+    "phone": "phone",
+    "shipping_address": "shipping_address",
+    "shipping_city": "city",
+    "email": "email",
 }
 
 
@@ -55,7 +68,6 @@ async def process_agent_action(
     conversation_id: uuid.UUID,
     strategy_version: int,
     response_text: str,
-    proposed_action: Optional[str] = None,
     proposed_transition: Optional[str] = None,
     extracted_data: Optional[dict] = None,
     ai_model: Optional[str] = None,
@@ -91,8 +103,6 @@ async def process_agent_action(
             f"got {strategy_version}"
         )
 
-    current_state = conversation.state
-
     # --- 3. Persist extracted_data → extracted_context with DAG gates --------
     if extracted_data:
         strategy_updates = {
@@ -125,6 +135,14 @@ async def process_agent_action(
             conversation.extracted_context = new_context
             side_effects.append(f"context_updated:{list(strategy_updates.keys())}")
 
+            # Merge stable customer facts into the persistent profile
+            await _merge_profile(
+                session,
+                client_user_id=conversation.client_user_id,
+                extracted_context=new_context,
+                payment_just_confirmed="payment_confirmation" in strategy_updates,
+            )
+
     # --- 4. Auto-escalate when all purchase data is collected ----------------
     if conversation.state != "human_handoff":
         client_row = await session.execute(
@@ -140,11 +158,7 @@ async def process_agent_action(
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conversation.id)
-                .values(
-                    state="human_handoff",
-                    previous_state=old_state,
-                    escalation_reason="Todos los datos de compra recopilados — listo para intervención humana",
-                )
+                .values(state="human_handoff")
             )
             conversation.state = "human_handoff"
             session.add(
@@ -154,8 +168,11 @@ async def process_agent_action(
                     entity_type="conversation",
                     entity_id=conversation.id,
                     actor_type="system",
-                    old_value={"state": old_state},
-                    new_value={"state": "human_handoff", "reason": "purchase_data_complete"},
+                    new_value={
+                        "old_state": old_state,
+                        "new_state": "human_handoff",
+                        "reason": "purchase_data_complete",
+                    },
                 )
             )
             side_effects.append("escalated:purchase_data_complete")
@@ -176,7 +193,7 @@ async def process_agent_action(
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conversation.id)
-                .values(state=proposed_transition, previous_state=old_state)
+                .values(state=proposed_transition)
             )
             conversation.state = proposed_transition
             side_effects.append(f"state_changed:{old_state}→{proposed_transition}")
@@ -187,8 +204,7 @@ async def process_agent_action(
                     entity_type="conversation",
                     entity_id=conversation.id,
                     actor_type="agent",
-                    old_value={"state": old_state},
-                    new_value={"state": proposed_transition},
+                    new_value={"old_state": old_state, "new_state": proposed_transition},
                 )
             )
 
@@ -203,7 +219,6 @@ async def process_agent_action(
         ai_prompt_tokens=prompt_tokens,
         ai_completion_tokens=completion_tokens,
         ai_latency_ms=latency_ms,
-        proposed_action=proposed_action,
         extracted_data=extracted_data,
     )
     session.add(out_message)
@@ -216,10 +231,7 @@ async def process_agent_action(
             entity_type="message",
             entity_id=out_message.id,
             actor_type="agent",
-            new_value={
-                "proposed_action": proposed_action,
-                "side_effects": side_effects,
-            },
+            new_value={"side_effects": side_effects},
         )
     )
 
@@ -232,3 +244,54 @@ async def process_agent_action(
         "side_effects": side_effects,
         "rejection_reason": None,
     }
+
+
+async def _merge_profile(
+    session: AsyncSession,
+    client_user_id: uuid.UUID,
+    extracted_context: dict,
+    payment_just_confirmed: bool,
+) -> None:
+    """Merge stable customer facts from extracted_context into client_users.profile.
+
+    On payment_confirmation, also increments purchase_count and appends a
+    lightweight purchase record.
+    """
+    updates: dict = {}
+    for ctx_key, profile_key in PROFILE_PERSIST_MAP.items():
+        val = extracted_context.get(ctx_key)
+        if val:
+            updates[profile_key] = val
+
+    # Derive first_name from full_name if present
+    full_name = extracted_context.get("full_name")
+    if full_name:
+        updates["first_name"] = str(full_name).split()[0]
+
+    if not updates and not payment_just_confirmed:
+        return
+
+    cu_row = await session.execute(
+        select(ClientUser).where(ClientUser.id == client_user_id)
+    )
+    client_user = cu_row.scalar_one_or_none()
+    if client_user is None:
+        return
+
+    profile = dict(client_user.profile or {})
+    profile.update(updates)
+
+    if payment_just_confirmed:
+        profile["purchase_count"] = int(profile.get("purchase_count", 0)) + 1
+        purchases = list(profile.get("purchases", []))
+        purchases.append({
+            "date": datetime.now(timezone.utc).isoformat(),
+            "product_id": extracted_context.get("product_id"),
+        })
+        profile["purchases"] = purchases
+
+    await session.execute(
+        update(ClientUser)
+        .where(ClientUser.id == client_user_id)
+        .values(profile=profile)
+    )

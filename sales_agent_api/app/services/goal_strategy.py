@@ -100,16 +100,11 @@ def _build_close_sale_checkpoints(business_rules: dict) -> list[Checkpoint]:
 
     # lead_qualified checkpoint — may be skipped by business rule
     if not business_rules.get("skip_lead_qualification", False):
-        lead_fields = ["full_name", "phone"]
-        if business_rules.get("require_id_number", False):
-            lead_fields.append("identification_number")
-        if business_rules.get("require_email", False):
-            lead_fields.append("email")
         checkpoints.append(
             Checkpoint(
                 name="lead_qualified",
                 label="Lead qualified",
-                required_fields=lead_fields,
+                required_fields=["full_name", "phone"],
                 blocked_by=[],
             )
         )
@@ -273,8 +268,6 @@ class GoalStrategyEngine:
         prompts = {
             "product_id": "Help the customer choose a product from the catalog.",
             "full_name": "Try to learn the customer's name.",
-            "identification_number": "Ask for the customer's ID number.",
-            "email": "Ask for the customer's email.",
             "phone": "Try to learn the customer's phone number for the carrier.",
             "shipping_address": "Try to learn the full delivery address (neighborhood, street, number, apartment).",
             "shipping_city": "Try to learn the customer's city.",

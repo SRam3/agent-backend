@@ -145,28 +145,6 @@ def test_09_skip_lead_qualification_jumps_to_shipping():
     assert "full_name" not in d.missing_fields
 
 
-def test_10_require_id_number_adds_field():
-    """require_id_number=True should add identification_number to lead_qualified."""
-    d = engine.compute(
-        "close_sale",
-        {"product_id": "abc"},
-        business_rules={"require_id_number": True},
-    )
-    assert d.current_checkpoint == "lead_qualified"
-    assert "identification_number" in d.missing_fields
-
-
-def test_11_require_email_adds_field():
-    """require_email=True should add email to lead_qualified fields."""
-    d = engine.compute(
-        "close_sale",
-        {"product_id": "abc"},
-        business_rules={"require_email": True},
-    )
-    assert d.current_checkpoint == "lead_qualified"
-    assert "email" in d.missing_fields
-
-
 # ---------------------------------------------------------------------------
 # Progress percentages
 # ---------------------------------------------------------------------------
