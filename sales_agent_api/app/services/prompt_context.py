@@ -106,51 +106,136 @@ def format_business_context(
     return "\n\n".join(sections)
 
 
+# Campos del pedido ordenados según el DAG de close_sale. La tupla es
+# (clave en extracted_context, etiqueta humana, etiqueta corta para "FALTA").
+_ORDER_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("product_id",          "Producto",             "producto"),
+    ("full_name",           "Nombre completo",      "nombre completo"),
+    ("phone",               "Teléfono",             "teléfono"),
+    ("shipping_city",       "Ciudad",               "ciudad"),
+    ("shipping_address",    "Dirección",            "dirección"),
+    ("user_confirmation",   "Confirmación del cliente", "confirmación del cliente"),
+    ("payment_confirmation","Pago confirmado",      "comprobante de pago"),
+)
+
+
+def format_customer_profile(
+    display_name: str | None,
+    profile: dict,
+) -> str:
+    """Bloque de perfil del cliente — qué sabemos de él antes de esta conversación.
+
+    Se renderiza al inicio del prompt. Si el cliente es nuevo (profile vacío),
+    lo declara explícitamente para que el LLM se presente normalmente. Si es
+    recurrente, lo nombra por su nombre de pila y lista compras previas y
+    preferencias persistidas.
+    """
+    profile = profile or {}
+    lines = ["=== CLIENTE ==="]
+
+    first_name = profile.get("first_name") or (
+        profile.get("full_name", "").split()[0] if profile.get("full_name") else None
+    )
+
+    if not profile and not display_name:
+        lines.append("Cliente nuevo. No tenemos datos previos.")
+        lines.append("INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar.")
+        return "\n".join(lines)
+
+    if profile:
+        lines.append("Cliente que ya conocemos. Datos en archivo:")
+        if first_name:
+            lines.append(f"  • Nombre: {first_name}")
+        if profile.get("full_name"):
+            lines.append(f"  • Nombre completo: {profile['full_name']}")
+        if profile.get("email"):
+            lines.append(f"  • Email: {profile['email']}")
+        if profile.get("city"):
+            lines.append(f"  • Ciudad: {profile['city']}")
+        if profile.get("shipping_address"):
+            lines.append(f"  • Dirección: {profile['shipping_address']}")
+        prefs = profile.get("preferences") or {}
+        if prefs.get("grind"):
+            lines.append(f"  • Prefiere molido: {prefs['grind']}")
+        if prefs.get("roast"):
+            lines.append(f"  • Prefiere tueste: {prefs['roast']}")
+        pc = profile.get("purchase_count") or 0
+        if pc:
+            lines.append(f"  • Compras previas: {pc}")
+        lines.append("")
+        if first_name:
+            lines.append(
+                f"INSTRUCCIÓN: Dirígete a {first_name} por su nombre. No te vuelvas a presentar "
+                "ni preguntes datos que ya tenemos arriba. Saluda con cercanía (cliente recurrente)."
+            )
+        else:
+            lines.append(
+                "INSTRUCCIÓN: Es cliente recurrente. No repreguntes datos ya en archivo. "
+                "Saluda con cercanía."
+            )
+    elif display_name:
+        lines.append(f"Cliente nuevo. En WhatsApp aparece como: {display_name}")
+        lines.append("INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar.")
+
+    return "\n".join(lines)
+
+
 def format_conversation_summary(
     user_context: dict,
     extracted_context: dict,
 ) -> str:
-    """Generate a brief summary of what we already know about the customer.
+    """Resumen de estado para el LLM en español — perfil + estado del pedido.
 
-    Helps the LLM have context without reading all 20 recent messages.
+    Se inyecta cerca del inicio del system prompt. Lo relevante para el LLM es:
+      1. Quién es el cliente (perfil persistente entre conversaciones)
+      2. Qué datos YA tenemos de esta conversación (nunca volver a pedir)
+      3. Qué datos FALTAN para cerrar la venta (referencia, no urgencia)
     """
-    known: list[str] = []
-
-    # From user_context (profile data)
     display_name = user_context.get("display_name")
-    if display_name:
-        known.append(f"display_name: {display_name}")
-
-    # Persistent profile (facts carried across conversations)
     profile = user_context.get("profile") or {}
-    for src, label in (
-        ("first_name", "first name on file"),
-        ("full_name", "full name on file"),
-        ("email", "email on file"),
-        ("city", "city on file"),
-        ("shipping_address", "shipping address on file"),
-    ):
-        if profile.get(src):
-            known.append(f"{label}: {profile[src]}")
-    if profile.get("purchase_count"):
-        known.append(f"purchase count: {profile['purchase_count']}")
+    ctx = extracted_context or {}
 
-    # From extracted_context (conversation-level data)
-    for field in ("product_id", "full_name", "phone", "shipping_address",
-                  "shipping_city", "user_confirmation",
-                  "payment_confirmation"):
-        value = extracted_context.get(field)
+    sections = [format_customer_profile(display_name, profile)]
+
+    # --- ESTADO DEL PEDIDO --------------------------------------------------
+    order_lines = ["=== ESTADO DEL PEDIDO ==="]
+
+    collected = []
+    missing = []
+    for key, label, short in _ORDER_FIELDS:
+        value = ctx.get(key)
         if value:
-            known.append(f"{field}: {value}")
+            collected.append((label, value))
+        else:
+            missing.append(short)
 
-    if not known:
-        return "CUSTOMER CONTEXT: New customer, no data collected yet."
+    if collected:
+        order_lines.append("Datos recopilados en esta conversación:")
+        for label, value in collected:
+            order_lines.append(f"  ✓ {label}: {value}")
+    else:
+        order_lines.append("Aún no se ha recopilado ningún dato de pedido en esta conversación.")
 
-    lines = ["CUSTOMER CONTEXT (data already collected):"]
-    for item in known:
-        lines.append(f"  - {item}")
+    if missing:
+        order_lines.append("")
+        order_lines.append("Aún falta recopilar (solo referencia — NO los pidas todos de golpe):")
+        for short in missing:
+            order_lines.append(f"  ✗ {short}")
+    else:
+        order_lines.append("")
+        order_lines.append("Todos los datos del pedido están completos.")
 
-    return "\n".join(lines)
+    order_lines.append("")
+    order_lines.append(
+        "REGLAS DE USO DE ESTE BLOQUE:\n"
+        "  • NUNCA vuelvas a pedir un dato marcado con ✓. Ya lo tenemos.\n"
+        "  • Responde primero lo que el cliente pregunta; los datos faltantes son guía, no urgencia.\n"
+        "  • Solo pide UN dato faltante a la vez, y solo cuando la conversación lo lleve naturalmente.\n"
+        "  • Si el cliente dice \"ya te lo dije\", créele: revisa arriba antes de volver a preguntar."
+    )
+
+    sections.append("\n".join(order_lines))
+    return "\n\n".join(sections)
 
 
 def _format_price(amount: float | int, currency: str = "COP") -> str:
