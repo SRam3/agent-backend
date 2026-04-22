@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../sales_agent_ap
 from app.services.prompt_context import (
     format_business_context,
     format_conversation_summary,
+    format_customer_profile,
     _format_price,
 )
 
@@ -106,35 +107,41 @@ def test_business_context_partial_rules():
 
 def test_summary_new_customer():
     result = format_conversation_summary({}, {})
-    assert "New customer" in result
+    assert "=== CLIENTE ===" in result
+    assert "Cliente nuevo" in result
+    assert "=== ESTADO DEL PEDIDO ===" in result
+    assert "Aún no se ha recopilado" in result
 
 
-def test_summary_with_display_name():
-    result = format_conversation_summary(
-        {"display_name": "Juan"},
-        {},
-    )
+def test_summary_with_display_name_only():
+    result = format_conversation_summary({"display_name": "Juan"}, {})
     assert "Juan" in result
+    assert "Cliente nuevo" in result
 
 
-def test_summary_with_extracted_context():
+def test_summary_with_extracted_context_marks_collected():
     result = format_conversation_summary(
         {},
         {"product_id": "abc-uuid", "full_name": "Juan Pérez", "shipping_city": "Manizales"},
     )
-    assert "product_id: abc-uuid" in result
-    assert "full_name: Juan Pérez" in result
-    assert "shipping_city: Manizales" in result
+    assert "✓ Producto: abc-uuid" in result
+    assert "✓ Nombre completo: Juan Pérez" in result
+    assert "✓ Ciudad: Manizales" in result
+    # the ones not collected yet appear as missing
+    assert "✗ teléfono" in result
+    assert "✗ dirección" in result
 
 
-def test_summary_with_profile_facts():
+def test_summary_returning_customer_profile():
     result = format_conversation_summary(
-        {"profile": {"full_name": "Juan Pérez", "shipping_address": "Calle 10 #5-20"}},
+        {"profile": {"full_name": "Juan Pérez", "shipping_address": "Calle 10 #5-20", "city": "Manizales"}},
         {},
     )
-    assert "full name on file: Juan Pérez" in result
-    assert "shipping address on file: Calle 10 #5-20" in result
-    assert "email" not in result
+    assert "Cliente que ya conocemos" in result
+    assert "Nombre completo: Juan Pérez" in result
+    assert "Dirección: Calle 10 #5-20" in result
+    assert "Ciudad: Manizales" in result
+    assert "Dirígete a Juan por su nombre" in result
 
 
 def test_summary_combines_profile_and_context():
@@ -143,9 +150,48 @@ def test_summary_combines_profile_and_context():
         {"product_id": "abc", "phone": "3001234567"},
     )
     assert "Juan" in result
-    assert "purchase count: 2" in result
-    assert "phone: 3001234567" in result
-    assert "product_id: abc" in result
+    assert "Compras previas: 2" in result
+    assert "✓ Teléfono: 3001234567" in result
+    assert "✓ Producto: abc" in result
+
+
+def test_profile_block_new_customer():
+    result = format_customer_profile(None, {})
+    assert "Cliente nuevo" in result
+    assert "Preséntate brevemente" in result
+
+
+def test_profile_block_returning_customer_with_preferences():
+    result = format_customer_profile(
+        "Juan",
+        {
+            "first_name": "Juan",
+            "preferences": {"grind": "granos enteros", "roast": "medio"},
+            "purchase_count": 3,
+        },
+    )
+    assert "Juan" in result
+    assert "Prefiere molido: granos enteros" in result
+    assert "Prefiere tueste: medio" in result
+    assert "Compras previas: 3" in result
+
+
+def test_summary_all_complete():
+    """When every order field is collected, no missing block."""
+    result = format_conversation_summary(
+        {},
+        {
+            "product_id": "abc",
+            "full_name": "Juan Pérez",
+            "phone": "3001234567",
+            "shipping_city": "Manizales",
+            "shipping_address": "Calle 10",
+            "user_confirmation": True,
+            "payment_confirmation": True,
+        },
+    )
+    assert "Todos los datos del pedido están completos" in result
+    assert "✗" not in result
 
 
 # ---------------------------------------------------------------------------
