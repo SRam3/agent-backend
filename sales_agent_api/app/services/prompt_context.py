@@ -121,14 +121,19 @@ def format_conversation_summary(
     if display_name:
         known.append(f"display_name: {display_name}")
 
-    if user_context.get("has_full_name"):
-        known.append("full name: on file")
-    if user_context.get("has_email"):
-        known.append("email: on file")
-    if user_context.get("has_address"):
-        known.append("address: on file")
-    if user_context.get("has_city"):
-        known.append("city: on file")
+    # Persistent profile (facts carried across conversations)
+    profile = user_context.get("profile") or {}
+    for src, label in (
+        ("first_name", "first name on file"),
+        ("full_name", "full name on file"),
+        ("email", "email on file"),
+        ("city", "city on file"),
+        ("shipping_address", "shipping address on file"),
+    ):
+        if profile.get(src):
+            known.append(f"{label}: {profile[src]}")
+    if profile.get("purchase_count"):
+        known.append(f"purchase count: {profile['purchase_count']}")
 
     # From extracted_context (conversation-level data)
     for field in ("product_id", "full_name", "phone", "shipping_address",

@@ -26,7 +26,6 @@ class AgentActionRequest(BaseModel):
     conversation_id: uuid.UUID
     strategy_version: int
     response_text: str
-    proposed_action: Optional[str] = None
     proposed_transition: Optional[str] = None
     extracted_data: Optional[dict] = None
     ai_model: Optional[str] = None
@@ -72,7 +71,6 @@ async def agent_action_endpoint(
             conversation_id=body.conversation_id,
             strategy_version=body.strategy_version,
             response_text=body.response_text,
-            proposed_action=body.proposed_action,
             proposed_transition=body.proposed_transition,
             extracted_data=body.extracted_data,
             ai_model=body.ai_model,
