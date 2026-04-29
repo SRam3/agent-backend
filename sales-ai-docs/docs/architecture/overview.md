@@ -134,7 +134,7 @@ Una conversación tiene tres tipos de información distintos, cada uno con su lu
 
 Cada tabla tenant-facing tiene `client_id UUID NOT NULL FK` que apunta a `clients`. Toda query filtra por `client_id`. La separación entre tenants es por convención en la capa de servicio — **no por Row-Level Security de Postgres**. Un bug en una query que olvide el filtro puede leer datos cross-tenant.
 
-Esto es deuda técnica reconocida que se va a tomar al tercer cliente productivo. Para MVP con un cliente demo, está dentro del riesgo aceptado.
+Esto es deuda técnica reconocida que se va a tomar al tercer cliente productivo. Para MVP con un solo cliente, está dentro del riesgo aceptado.
 
 **Customización por cliente** vive en `clients.business_rules` (JSONB):
 - `default_goal`: qué goal del DAG se activa por defecto
