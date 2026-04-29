@@ -587,4 +587,4 @@ docker run -p 8000:8000 \
 | **Managed Identity** | `<MANAGED_IDENTITY_NAME>` — accede a Key Vault y ACR sin contraseñas en código |
 | **CI/CD** | Push a `main` → GitHub Actions → tests → build Docker → push ACR → rollout Container App |
 | **Cliente demo** | Café Arenillo — ID `00000000-0000-0000-0000-000000000001` |
-| **n8n** | `<N8N_CONTAINER_APP>.azurecontainerapps.io` (orquesta Chakra ↔ backend ↔ OpenAI) |
+| **n8n** | `https://<N8N_CONTAINER_APP>.azurecontainerapps.io` (orquesta Chakra ↔ backend ↔ OpenAI) |
