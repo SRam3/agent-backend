@@ -49,67 +49,43 @@ Hace tres cosas que un backend de chatbot típico no hace:
 
 Cada mensaje entrante en WhatsApp genera **exactamente 2 llamadas HTTP** de n8n al backend y **1 llamada al LLM**. Sin tool-calling, sin loops.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         FLUJO POR MENSAJE                           │
-│                                                                     │
-│  WhatsApp ──► n8n ──► LLAMADA 1: POST /api/v1/ingest/message       │
-│                           │                                         │
-│                           │  Backend (1 transacción):               │
-│                           │   1. Validar cliente (tenant)           │
-│                           │   2. Verificar idempotencia             │
-│                           │   3. Upsert client_user                 │
-│                           │   4. Bloqueo de usuario                 │
-│                           │   5. Conversación (ventana 24h, reset   │
-│                           │      extracted_context si idle 30+min)  │
-│                           │   6. Advisory lock (concurrencia)       │
-│                           │   7. Persistir mensaje entrante         │
-│                           │   8. Debounce 5s (evita responder       │
-│                           │      cuando hay mensajes encolados)     │
-│                           │   9. Calcular directiva (DAG)           │
-│                           │  10. Persistir strategy_version + meta  │
-│                           │                                         │
-│                           ▼                                         │
-│                    Responde:                                        │
-│                    • strategy_directive (texto para el LLM)         │
-│                    • strategy_meta (goal, progress, checkpoint)     │
-│                    • strategy_version (número entero, clave)        │
-│                    • client_config (system_prompt, modelo, temp)    │
-│                    • user_context (display_name, flags has_*)       │
-│                    • product_catalog (con UUID + SKU + precio)      │
-│                    • business_context (bloque de reglas formateado) │
-│                    • conversation_summary (lo ya sabido)            │
-│                    • recent_messages (últimos 20)                   │
-│                           │                                         │
-│                           ▼                                         │
-│               n8n arma el system prompt y llama al LLM             │
-│               LLM devuelve: response_text + extracted_data          │
-│                           │                                         │
-│                           ▼                                         │
-│              LLAMADA 2: POST /api/v1/agent/action                  │
-│                           │                                         │
-│                           │  Backend:                               │
-│                           │   1. Verificar strategy_version         │
-│                           │      (si no coincide → 409)             │
-│                           │   2. Mergear extracted_data en          │
-│                           │      conversation.extracted_context,    │
-│                           │      aplicando DAG gates                │
-│                           │   3. Si todos los checkpoints listos    │
-│                           │      → auto-escalar a human_handoff     │
-│                           │   4. Aplicar proposed_transition (raro) │
-│                           │   5. Persistir mensaje saliente         │
-│                           │   6. Audit log                          │
-│                           │                                         │
-│                           ▼                                         │
-│                    Responde:                                        │
-│                    • approved, final_response_text                  │
-│                    • new_state                                      │
-│                    • side_effects (context_updated, escalated,      │
-│                      warning:premature_summary, …)                  │
-│                           │                                         │
-│                           ▼                                         │
-│               n8n envía final_response_text → WhatsApp             │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant W as WhatsApp
+    participant N as n8n
+    participant B as Backend FastAPI
+    participant L as LLM (gpt-4o-mini)
+    participant DB as PostgreSQL
+
+    W->>N: Webhook Chakra HQ
+
+    rect rgb(240, 248, 255)
+    Note over N,DB: LLAMADA 1 — Ingesta
+    N->>B: POST /api/v1/ingest/message
+    B->>DB: 1. Validar tenant + idempotencia
+    B->>DB: 2. Upsert client_user + bloqueo
+    B->>DB: 3. Conversación (ventana 24h)
+    B->>DB: 4. Advisory lock + persistir inbound
+    Note over B: 5. Debounce 5s
+    B->>B: 6. GoalStrategyEngine → directive
+    B->>DB: 7. Bump strategy_version
+    B-->>N: strategy_directive + strategy_version + client_config<br/>user_context + product_catalog + business_context<br/>conversation_summary + recent_messages
+    end
+
+    N->>L: system prompt + directive + historial
+    L-->>N: response_text + extracted_data
+
+    rect rgb(255, 248, 240)
+    Note over N,DB: LLAMADA 2 — Validación
+    N->>B: POST /api/v1/agent/action
+    B->>B: 1. Verificar strategy_version (409 si stale)
+    B->>B: 2. DAG gates → merge extracted_data
+    B->>DB: 3. Auto-escalate si all_complete
+    B->>DB: 4. Persistir outbound + audit_log
+    B-->>N: approved + final_response_text + side_effects
+    end
+
+    N->>W: final_response_text via Chakra
 ```
 
 **Propiedad clave:** si el backend rechaza un dato (p. ej. `user_confirmation` sin teléfono), el texto que el LLM generó **igual se envía al usuario**. La conversación no se interrumpe — solo no se persiste el dato prematuro.
@@ -122,25 +98,15 @@ Función pura: `(goal, extracted_context, business_rules) → StrategyDirective`
 
 ### DAG actual del goal `close_sale`
 
-```
-product_matched ─────────┐
-   (product_id)          │
-        │                ▼
-        │          lead_qualified
-        │          (full_name, phone)
-        │                │
-        │                ▼
-        │         shipping_info_collected
-        │         (shipping_address, shipping_city)
-        │                │
-        └────────────────┤
-                         ▼
-                   user_confirmed
-                   (user_confirmation)
-                         │
-                         ▼
-                  payment_confirmed
-                  (payment_confirmation)
+```mermaid
+graph TD
+    A["📦 product_matched<br/>product_id"]
+    B["👤 lead_qualified<br/>full_name · phone"]
+    C["🏠 shipping_info_collected<br/>shipping_address · shipping_city"]
+    D["✅ user_confirmed<br/>user_confirmation"]
+    E["💳 payment_confirmed<br/>payment_confirmation"]
+
+    A --> B --> C --> D --> E
 ```
 
 > **Nota histórica:** los checkpoints `intent_identified` y `order_created` fueron removidos. `intent` nunca se capturaba de forma confiable (bloqueaba el auto-escalate), y `order_created` requería materializar órdenes en DB — algo que hoy se maneja manualmente por WhatsApp.
@@ -187,22 +153,14 @@ Los demás campos (`product_id`, `full_name`, `phone`, `shipping_*`) se aceptan 
 
 ## Máquina de estados de conversación
 
-```
-              mensaje entrante
-                     │
-                     ▼
-                ┌─────────┐
-         ┌──────┤ active  ├──────┐
-         │      └─────────┘      │
-         │     auto-escalate     │
-         │  (all checkpoints OK) │
-         ▼                       ▼
-  ┌────────────────┐        ┌─────────┐
-  │ human_handoff  │        │ closed  │
-  └────────────────┘        └─────────┘
-         │                       ▲
-         └───────────────────────┘
-              operador cierra
+```mermaid
+stateDiagram-v2
+    [*] --> active : mensaje entrante
+    active --> human_handoff : auto-escalate (all checkpoints OK)
+    active --> closed
+    human_handoff --> active : operador interviene
+    human_handoff --> closed : operador cierra
+    closed --> [*]
 ```
 
 Estados y transiciones permitidas:
@@ -586,5 +544,5 @@ docker run -p 8000:8000 \
 | **Key Vault** | `<KEY_VAULT_NAME>` (DBUSERNAME, DBPASSWORD, DBHOST, DBNAME, sales-ai-service-token) |
 | **Managed Identity** | `<MANAGED_IDENTITY_NAME>` — accede a Key Vault y ACR sin contraseñas en código |
 | **CI/CD** | Push a `main` → GitHub Actions → tests → build Docker → push ACR → rollout Container App |
-| **Cliente demo** | Café Arenillo — ID `00000000-0000-0000-0000-000000000001` |
+| **Cliente** | Café Arenillo — ID `00000000-0000-0000-0000-000000000001` |
 | **n8n** | `https://<N8N_CONTAINER_APP>.azurecontainerapps.io` (orquesta Chakra ↔ backend ↔ OpenAI) |

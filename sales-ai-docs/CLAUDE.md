@@ -15,21 +15,10 @@ Stack: FastAPI (async) + PostgreSQL 16 + asyncpg/SQLAlchemy 2.0. Azure Container
 
 ## Arquitectura en 3 capas
 
-```mermaid
-graph TB
-    subgraph C1["Capa 1 — Lenguaje"]
-        LLM["LLM · gpt-4o-mini\nNLU + NLG · sin tools · sin loops · sin estado"]
-    end
-    subgraph C2["Capa 2 — Política"]
-        POL["GoalStrategyEngine · DAG gates · state machine"]
-    end
-    subgraph C3["Capa 3 — Dominio"]
-        DB["PostgreSQL · ground truth"]
-    end
-    C2 -- directiva --> C1
-    C1 -- extracted_data --> C2
-    C3 -- contexto --> C2
-    C2 -- slots aceptados --> C3
+```
+Capa 1 — Lenguaje:  LLM (NLU + NLG, sin tools, sin loops, sin estado)
+Capa 2 — Política:  GoalStrategyEngine (DAG) + DAG gates + state machine
+Capa 3 — Dominio:   PostgreSQL (ground truth)
 ```
 
 Cada turno = 2 HTTP calls de n8n al backend, 1 LLM call al medio. Sin tool-calling, sin agent loops.
@@ -62,14 +51,10 @@ audit_log            eventos append-only
 
 3 estados actuales (post-refactor 2026-04-19 — ver ADR-007):
 
-```mermaid
-stateDiagram-v2
-    [*] --> active
-    active --> human_handoff : DAG completo (auto-escalate)
-    active --> closed
-    human_handoff --> active : operador interviene
-    human_handoff --> closed
-    closed --> [*]
+```
+active ──► human_handoff ──► closed
+   │              ▲              ▲
+   └──────────────┴──────────────┘
 ```
 
 Toda conversación nueva nace en `active`. Auto-escala a `human_handoff` cuando todos los checkpoints del DAG están completos. `closed` es terminal.
@@ -78,16 +63,23 @@ Toda conversación nueva nace en `active`. Auto-escala a `human_handoff` cuando 
 
 ## DAG de close_sale (vigente)
 
-```mermaid
-graph TD
-    A["📦 product_matched\nproduct_id"]
-    B["👤 lead_qualified\nfull_name · phone"]
-    C["🏠 shipping_info_collected\nshipping_address · shipping_city"]
-    D["✅ user_confirmed\nuser_confirmation\n⚡ gate: full_name + phone + shipping_address + shipping_city"]
-    E["💳 payment_confirmed\npayment_confirmation\n⚡ gate: user_confirmed + phone + shipping_address"]
-    F(["🤝 auto-escalate → human_handoff"])
-
-    A --> B --> C --> D --> E --> F
+```
+product_matched (product_id)
+    │
+    ▼
+lead_qualified (full_name, phone)
+    │
+    ▼
+shipping_info_collected (shipping_address, shipping_city)
+    │
+    ▼
+user_confirmed (user_confirmation)            ← gate: requiere los 4 anteriores
+    │
+    ▼
+payment_confirmed (payment_confirmation)      ← gate: requiere user_confirmed + phone + addr
+    │
+    ▼
+auto-escalate → human_handoff
 ```
 
 NO existen `intent_identified` ni `order_created` (removidos — ver ADR-008 cuando se escriba).
@@ -101,36 +93,38 @@ NO existen `intent_identified` ni `order_created` (removidos — ver ADR-008 cua
 
 ## El patrón de dos llamadas
 
-```mermaid
-sequenceDiagram
-    participant W as WhatsApp
-    participant N as n8n
-    participant B as Backend FastAPI
-    participant L as LLM (gpt-4o-mini)
-    participant DB as PostgreSQL
-
-    W->>N: Webhook Chakra · mensaje del cliente
-
-    N->>B: POST /api/v1/ingest/message
-    B->>DB: Validar client · idempotencia · bloqueo de usuario
-    B->>DB: Upsert client_user · find/create conversación (24h)
-    B->>DB: Advisory lock · persistir mensaje inbound
-    Note over B: Debounce 5s — DEUDA técnica
-    B->>B: GoalStrategyEngine → directive
-    B->>DB: Bump strategy_version · persistir snapshot
-    B-->>N: directive · strategy_version · business_context · recent_messages
-
-    N->>L: system prompt + directive + historial (1 sola llamada, sin tools)
-    L-->>N: response_text + extracted_data
-
-    N->>B: POST /api/v1/agent/action
-    B->>B: Verificar strategy_version (409 si stale — ADR-003)
-    B->>B: DAG gates → merge extracted_data
-    B->>DB: Sync stable facts → client_users.profile
-    B->>DB: Auto-escalate si all_complete · persistir outbound + audit_log
-    B-->>N: approved · final_response_text · side_effects
-
-    N->>W: final_response_text via Chakra
+```
+Mensaje WhatsApp
+    │
+    ▼
+n8n → POST /api/v1/ingest/message
+    │   Backend (1 transacción):
+    │   1. Validar client + idempotencia + bloqueo de usuario
+    │   2. Upsert client_user (ON CONFLICT por phone+client_id)
+    │   3. Conversación (ventana 24h, reset extracted_context si idle 30+ min)
+    │   4. Advisory lock pg_advisory_xact_lock(hash(conv_id))
+    │   5. Persistir mensaje inbound
+    │   6. Debounce 5s (asyncio.sleep — DEUDA, ver "Deuda técnica")
+    │   7. Computar GoalStrategyEngine directive
+    │   8. Bump strategy_version, persistir snapshot
+    │   Devuelve: directive + strategy_version + business_context + ...
+    │
+    ▼
+n8n arma system prompt + llama LLM
+    │   LLM devuelve: response_text + extracted_data
+    │
+    ▼
+n8n → POST /api/v1/agent/action
+    │   Backend:
+    │   1. Verificar strategy_version (409 si stale — ver ADR-003)
+    │   2. Mergear extracted_data con DAG gates
+    │   3. Sync stable facts a client_users.profile
+    │   4. Auto-escalate si all_complete
+    │   5. Persistir outbound message + audit_log
+    │   Devuelve: approved + final_response_text + side_effects
+    │
+    ▼
+n8n envía → WhatsApp via Chakra
 ```
 
 ---
@@ -139,7 +133,7 @@ sequenceDiagram
 
 **Cuando crear una migración** (`migrations/versions/NNN_*.sql`):
 - Cambio de schema de cualquier tabla
-- Cambio de seed data del cliente demo (Café Arenillo)
+- Cambio de seed data de Café Arenillo
 - Cambio del `system_prompt_template` de un cliente
 - Cambio de `business_rules` JSONB que afecta comportamiento del bot
 
@@ -215,7 +209,7 @@ Numeración secuencial. NO modificar migraciones ya aplicadas — siempre crear 
 | Key Vault | `<KEY_VAULT_NAME>` (DBUSERNAME, DBPASSWORD, DBHOST, DBNAME, sales-ai-service-token) |
 | Managed Identity | `<MANAGED_IDENTITY_NAME>` |
 | n8n | `<N8N_CONTAINER_APP>.azurecontainerapps.io` |
-| Cliente demo | Café Arenillo — `00000000-0000-0000-0000-000000000001` |
+| Cliente | Café Arenillo — `00000000-0000-0000-0000-000000000001` |
 | CI/CD | Push a `main` → GitHub Actions → tests + Docker build → ACR push → Container App update |
 
 ---
