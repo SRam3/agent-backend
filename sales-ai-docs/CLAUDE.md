@@ -1,7 +1,6 @@
 # CLAUDE.md — Sales AI Agent Backend
 
-> **Este archivo es contexto operacional para Claude Code. Vive en la raíz del repo, está en `.gitignore`, y debe reflejar SIEMPRE el estado actual del sistema.**
->
+
 > Para entender el *por qué* de las decisiones, leer `docs/decisions/`. Para entender la arquitectura conceptual, leer `docs/architecture/overview.md`.
 
 ---
