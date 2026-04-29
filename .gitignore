@@ -1,0 +1,22 @@
+# Claude Code — contexto operacional, no se commitea
+/CLAUDE.md
+.claude/
+.claude-cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store

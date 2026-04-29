@@ -1,0 +1,13 @@
+# ─────────────────────────────────────────────────────────────────
+# Líneas a AGREGAR al .gitignore existente del repo
+# (no reemplazar — solo añadir al final si no están)
+# ─────────────────────────────────────────────────────────────────
+
+# Claude Code — contexto operacional, no se commitea
+CLAUDE.md
+.claude/
+.claude-cache/
+
+# Notas locales del equipo (si las llegas a tener)
+NOTES.local.md
+TODO.local.md
