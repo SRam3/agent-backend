@@ -88,6 +88,10 @@ class ClientUser(Base):
     is_blocked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    # CRM lifecycle stage (migration 008): 'new' | 'engaged' | 'customer' | 'dormant'
+    lifecycle_stage: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'new'")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

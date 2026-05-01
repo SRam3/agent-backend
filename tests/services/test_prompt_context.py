@@ -223,3 +223,104 @@ def test_format_price_cop():
 
 def test_format_price_other_currency():
     assert _format_price(99.99, "USD") == "99.99 USD"
+
+
+# ---------------------------------------------------------------------------
+# Memory block: last_conversation_summary, language, communication_style
+# ---------------------------------------------------------------------------
+
+def test_profile_block_renders_last_conversation_summary():
+    result = format_customer_profile(
+        "Juan",
+        {
+            "first_name": "Juan",
+            "last_conversation_summary": {
+                "summary": "Pidió 3 bolsas de Café Arenillo. No envió comprobante.",
+                "outcome": "abandoned_at_payment",
+                "interest_level": "high",
+                "objections": ["precio_envío"],
+            },
+        },
+    )
+    assert "MEMORIA DE LA ÚLTIMA CONVERSACIÓN" in result
+    assert "Pidió 3 bolsas" in result
+    assert "abandoned_at_payment" in result
+    assert "Nivel de interés: high" in result
+    assert "precio_envío" in result
+
+
+def test_profile_block_renders_pending_intent_when_present():
+    result = format_customer_profile(
+        "Juan",
+        {
+            "first_name": "Juan",
+            "last_conversation_summary": {
+                "summary": "Quería 3 bolsas pero no confirmó.",
+                "outcome": "abandoned_at_confirmation",
+                "interest_level": "medium",
+                "pending_intent": {
+                    "product_id": "uuid-cafe-001",
+                    "quantity": 3,
+                    "notes": None,
+                },
+            },
+        },
+    )
+    assert "Quedó a punto de comprar" in result
+    assert "cantidad=3" in result
+    assert "producto=uuid-cafe-001" in result
+
+
+def test_profile_block_skips_pending_intent_when_null():
+    result = format_customer_profile(
+        "Juan",
+        {
+            "first_name": "Juan",
+            "last_conversation_summary": {
+                "summary": "Solo preguntó por el menú.",
+                "outcome": "no_intent",
+                "interest_level": "low",
+                "pending_intent": None,
+            },
+        },
+    )
+    assert "Quedó a punto de comprar" not in result
+
+
+def test_profile_block_renders_language_english():
+    result = format_customer_profile(
+        "John",
+        {"first_name": "John", "language": "en"},
+    )
+    assert "INSTRUCCIÓN DE IDIOMA" in result
+    assert "INGLÉS" in result
+
+
+def test_profile_block_renders_language_spanish():
+    result = format_customer_profile(
+        "Juan",
+        {"first_name": "Juan", "language": "es"},
+    )
+    assert "INSTRUCCIÓN DE IDIOMA" in result
+    assert "español" in result
+
+
+def test_profile_block_renders_communication_style():
+    casual = format_customer_profile("Juan", {"first_name": "Juan", "communication_style": "casual"})
+    assert "tono cálido e informal" in casual
+
+    formal = format_customer_profile("Juan", {"first_name": "Juan", "communication_style": "formal"})
+    assert "tono formal" in formal
+
+    direct = format_customer_profile("Juan", {"first_name": "Juan", "communication_style": "direct"})
+    assert "breve y directo" in direct
+
+
+def test_profile_block_no_memory_block_when_no_summary():
+    """Returning customer without a previous summary doesn't render the block."""
+    result = format_customer_profile(
+        "Juan",
+        {"first_name": "Juan", "purchase_count": 1},
+    )
+    assert "MEMORIA DE LA ÚLTIMA CONVERSACIÓN" not in result
+    assert "Quedó a punto de comprar" not in result

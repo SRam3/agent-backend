@@ -164,6 +164,49 @@ def format_customer_profile(
         pc = profile.get("purchase_count") or 0
         if pc:
             lines.append(f"  • Compras previas: {pc}")
+
+        # Memory of the last conversation, populated by conversation_summary.py
+        last_summary = profile.get("last_conversation_summary") or {}
+        if last_summary.get("summary"):
+            lines.append("")
+            lines.append("MEMORIA DE LA ÚLTIMA CONVERSACIÓN:")
+            lines.append(f"  • Resumen: {last_summary['summary']}")
+            if last_summary.get("outcome"):
+                lines.append(f"  • Cómo terminó: {last_summary['outcome']}")
+            if last_summary.get("interest_level"):
+                lines.append(f"  • Nivel de interés: {last_summary['interest_level']}")
+            objections = last_summary.get("objections") or []
+            if objections:
+                lines.append(f"  • Objeciones previas: {', '.join(objections)}")
+            pending = last_summary.get("pending_intent") or {}
+            if pending and (pending.get("product_id") or pending.get("notes")):
+                bits = []
+                if pending.get("quantity"):
+                    bits.append(f"cantidad={pending['quantity']}")
+                if pending.get("product_id"):
+                    bits.append(f"producto={pending['product_id']}")
+                if pending.get("notes"):
+                    bits.append(pending["notes"])
+                lines.append(f"  • Quedó a punto de comprar: {', '.join(bits)}")
+
+        # Language + communication style guide the LLM tone/idiom
+        language = profile.get("language")
+        style = profile.get("communication_style")
+        if language or style:
+            lines.append("")
+            if language == "en":
+                lines.append("INSTRUCCIÓN DE IDIOMA: el cliente escribe en INGLÉS. Respóndele en inglés.")
+            elif language == "es":
+                lines.append("INSTRUCCIÓN DE IDIOMA: el cliente escribe en español. Respóndele en español.")
+            if style:
+                style_hint = {
+                    "formal": "Usa tono formal (usted, frases completas).",
+                    "casual": "Usa tono cálido e informal (tuteo, cercanía).",
+                    "direct": "Sé breve y directo. El cliente prefiere mensajes cortos.",
+                }.get(style)
+                if style_hint:
+                    lines.append(f"INSTRUCCIÓN DE ESTILO: {style_hint}")
+
         lines.append("")
         if first_name:
             lines.append(

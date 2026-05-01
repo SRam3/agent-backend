@@ -33,6 +33,11 @@ from app.models.core import (
     Message,
     Product,
 )
+from app.services.conversation_summary import (
+    SummarizerLLM,
+    needs_summary,
+    summarize_conversation,
+)
 from app.services.goal_strategy import GoalStrategyEngine
 from app.services.prompt_context import format_business_context, format_conversation_summary
 
@@ -72,6 +77,7 @@ async def ingest_message(
     display_name: Optional[str] = None,
     message_type: str = "text",
     timestamp: Optional[datetime] = None,
+    summarizer_llm: Optional[SummarizerLLM] = None,
 ) -> dict:
     """Process an inbound WhatsApp message.
 
@@ -138,10 +144,28 @@ async def ingest_message(
     conversation: Optional[Conversation] = conv_row.scalar_one_or_none()
 
     if conversation is None:
-        # Pre-seed extracted_context from the persistent customer profile so
-        # the LLM starts a new conversation already knowing what we have on
-        # file (name, city, address, preferences, purchase history).
-        seeded_context = _seed_context_from_profile(client_user.profile or {})
+        # Lazy compaction: if the customer has a previous conversation that
+        # hasn't been summarized into their profile yet, compact it now so
+        # the new conversation starts with full memory of the last one.
+        # We only pay the LLM cost when the customer actually returns.
+        prev_conv = await _find_last_conversation(session, client_id, client_user.id)
+        enriched_profile = dict(client_user.profile or {})
+        if prev_conv is not None and needs_summary(enriched_profile, prev_conv.id):
+            summary = await summarize_conversation(
+                session, prev_conv.id, llm=summarizer_llm
+            )
+            if summary is not None:
+                # Mirror what _persist_to_profile wrote, so the seed below
+                # and the user_context returned to n8n both reflect the
+                # freshly compacted memory without needing session.refresh.
+                enriched_profile["last_conversation_summary"] = summary
+                if summary.get("language"):
+                    enriched_profile["language"] = summary["language"]
+                if summary.get("communication_style"):
+                    enriched_profile["communication_style"] = summary["communication_style"]
+                client_user.profile = enriched_profile
+
+        seeded_context = _seed_context_from_profile(enriched_profile)
         conversation = Conversation(
             client_id=client_id,
             client_user_id=client_user.id,
@@ -151,22 +175,6 @@ async def ingest_message(
         )
         session.add(conversation)
         await session.flush()  # get the generated id
-    else:
-        # Reset extracted_context if conversation has been idle for 30+ minutes
-        # to prevent stale data from a previous interaction polluting the new one
-        idle_minutes = (now - (conversation.last_message_at or conversation.created_at)).total_seconds() / 60
-        if idle_minutes >= 30 and conversation.extracted_context:
-            logger.info(
-                "Resetting extracted_context for conversation %s (idle %.0f min)",
-                conversation.id, idle_minutes,
-            )
-            await session.execute(
-                update(Conversation)
-                .where(Conversation.id == conversation.id)
-                .values(extracted_context={}, state="active")
-            )
-            conversation.extracted_context = {}
-            conversation.state = "active"
 
     # --- 6. Advisory lock on conversation ------------------------------------
     lock_key = int(hashlib.sha1(str(conversation.id).encode()).hexdigest(), 16) % (2**63)
@@ -360,7 +368,12 @@ async def ingest_message(
 
 def _seed_context_from_profile(profile: dict) -> dict:
     """Pull stable customer facts out of the profile into a fresh extracted_context
-    so the strategy engine already sees what we know from past conversations."""
+    so the strategy engine already sees what we know from past conversations.
+
+    Also rehydrates the pending_intent (product/quantity the customer was
+    about to buy) from the last conversation summary, so an interrupted
+    sale resumes where it left off.
+    """
     if not profile:
         return {}
     seed: dict = {}
@@ -373,7 +386,34 @@ def _seed_context_from_profile(profile: dict) -> dict:
     ):
         if profile.get(src):
             seed[dst] = profile[src]
+
+    last_summary = profile.get("last_conversation_summary") or {}
+    pending = last_summary.get("pending_intent") or {}
+    if pending.get("product_id"):
+        seed["product_id"] = pending["product_id"]
+    if pending.get("quantity"):
+        seed["quantity"] = pending["quantity"]
     return seed
+
+
+async def _find_last_conversation(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+    client_user_id: uuid.UUID,
+) -> Optional[Conversation]:
+    """Most recent conversation for this customer, regardless of state.
+    Used to detect if there's a previous conversation to compact when a
+    new one is about to be created."""
+    row = await session.execute(
+        select(Conversation)
+        .where(
+            Conversation.client_id == client_id,
+            Conversation.client_user_id == client_user_id,
+        )
+        .order_by(Conversation.last_message_at.desc())
+        .limit(1)
+    )
+    return row.scalar_one_or_none()
 
 
 def _mask_phone(phone: str) -> str:
