@@ -9,3 +9,4 @@ azure-keyvault-secrets
 pytest
 pytest-asyncio
 httpx
+openai>=1.40

@@ -49,6 +49,10 @@ PROFILE_PERSIST_MAP = {
     "email": "email",
 }
 
+# Lifecycle stage ordering — only allow forward transitions to avoid
+# accidentally demoting a customer back to engaged on a follow-up chat.
+_LIFECYCLE_RANK = {"new": 0, "engaged": 1, "customer": 2, "dormant": 1}
+
 
 class AgentActionError(Exception):
     pass
@@ -136,11 +140,21 @@ async def process_agent_action(
             side_effects.append(f"context_updated:{list(strategy_updates.keys())}")
 
             # Merge stable customer facts into the persistent profile
+            payment_just_confirmed = "payment_confirmation" in strategy_updates
             await _merge_profile(
                 session,
                 client_user_id=conversation.client_user_id,
                 extracted_context=new_context,
-                payment_just_confirmed="payment_confirmation" in strategy_updates,
+                payment_just_confirmed=payment_just_confirmed,
+            )
+
+            # CRM lifecycle bump: any accepted slot moves a 'new' user to
+            # 'engaged'. A confirmed payment moves them to 'customer'.
+            target_stage = "customer" if payment_just_confirmed else "engaged"
+            await _bump_lifecycle_stage(
+                session,
+                client_user_id=conversation.client_user_id,
+                target=target_stage,
             )
 
     # --- 4. Auto-escalate when all purchase data is collected ----------------
@@ -294,4 +308,28 @@ async def _merge_profile(
         update(ClientUser)
         .where(ClientUser.id == client_user_id)
         .values(profile=profile)
+    )
+
+
+async def _bump_lifecycle_stage(
+    session: AsyncSession,
+    client_user_id: uuid.UUID,
+    target: str,
+) -> None:
+    """Move the customer forward in the CRM lifecycle. Never downgrades —
+    a customer who comes back for support stays a customer."""
+    target_rank = _LIFECYCLE_RANK.get(target, 0)
+    cu_row = await session.execute(
+        select(ClientUser.lifecycle_stage).where(ClientUser.id == client_user_id)
+    )
+    current = cu_row.scalar_one_or_none()
+    if current is None:
+        return
+    current_rank = _LIFECYCLE_RANK.get(current, 0)
+    if target_rank <= current_rank:
+        return
+    await session.execute(
+        update(ClientUser)
+        .where(ClientUser.id == client_user_id)
+        .values(lifecycle_stage=target)
     )

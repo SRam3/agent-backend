@@ -39,8 +39,40 @@ _NO_AUTH_PATHS = {"/health", "/", "/api/docs", "/openapi.json"}
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+def _bootstrap_openai_key() -> None:
+    """Resolve OPENAI_API_KEY from Key Vault on boot if not already set.
+
+    Order:
+      1. OPENAI_API_KEY env var (local dev / CI)
+      2. Azure Key Vault secret named 'openai-key' (production)
+
+    No-op if neither is available — conversation_summary.py degrades gracefully
+    (logs a warning and returns None instead of summarising).
+    """
+    if os.getenv("OPENAI_API_KEY"):
+        logger.info("OpenAI key: loaded from environment")
+        return
+
+    kv_url = os.getenv("KEY_VAULT_URL")
+    if not kv_url:
+        logger.warning("OpenAI key: not set, KEY_VAULT_URL absent — summarisation disabled")
+        return
+
+    try:
+        from azure.identity import DefaultAzureCredential
+        from azure.keyvault.secrets import SecretClient
+
+        credential = DefaultAzureCredential(exclude_shared_token_cache_credential=True)
+        kv = SecretClient(vault_url=kv_url, credential=credential)
+        os.environ["OPENAI_API_KEY"] = kv.get_secret("openai-key").value
+        logger.info("OpenAI key: loaded from Key Vault (openai-key)")
+    except Exception as exc:
+        logger.warning("OpenAI key: failed to load from Key Vault: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _bootstrap_openai_key()
     ok = await ping_db()
     if ok:
         logger.info("Database connection: OK")
