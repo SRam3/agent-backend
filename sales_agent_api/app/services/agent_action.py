@@ -127,6 +127,32 @@ async def process_agent_action(
             for w in rejection_warnings:
                 logger.warning("Field validation rejected: %s", w)
 
+        # 3b. Image-already-sent gate: the system_prompt forbids sending the
+        # product photo more than once per conversation, but during message
+        # bursts two LLM cycles can run in parallel without seeing each
+        # other's outbound and both emit send_image_url. Drop it if any
+        # prior outbound in this conversation already carried it.
+        if extracted_data.get("send_image_url"):
+            prior = await session.execute(
+                select(Message.id)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    Message.direction == "outbound",
+                    Message.extracted_data["send_image_url"].astext.isnot(None),
+                )
+                .limit(1)
+            )
+            image_already_sent = prior.scalar_one_or_none() is not None
+            extracted_data, image_warnings = _filter_send_image_url(
+                extracted_data, image_already_sent=image_already_sent
+            )
+            if image_warnings:
+                side_effects.extend(image_warnings)
+                logger.warning(
+                    "Dropped send_image_url for conversation %s: prior outbound already carried it",
+                    conversation.id,
+                )
+
         strategy_updates = {
             k: v for k, v in extracted_data.items()
             if k in STRATEGY_FIELDS and v
@@ -349,6 +375,24 @@ async def _merge_profile(
         .where(ClientUser.id == client_user_id)
         .values(profile=profile)
     )
+
+
+def _filter_send_image_url(
+    extracted_data: dict,
+    image_already_sent: bool,
+) -> tuple[dict, list[str]]:
+    """Drop send_image_url from extracted_data if a prior outbound in the
+    same conversation already carried one. Returns (clean_data, warnings).
+
+    Pure function so it can be unit-tested without a DB. The DB query that
+    determines image_already_sent lives in process_agent_action.
+    """
+    if not extracted_data.get("send_image_url"):
+        return extracted_data, []
+    if not image_already_sent:
+        return extracted_data, []
+    clean = {k: v for k, v in extracted_data.items() if k != "send_image_url"}
+    return clean, ["warning:image_already_sent"]
 
 
 async def _bump_lifecycle_stage(
