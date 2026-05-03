@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update, text
+from sqlalchemy import func, select, update, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -207,26 +207,29 @@ async def ingest_message(
     conversation.message_count += 1
     conversation.last_message_at = now
 
-    # --- 8b. Rapid-fire debounce ---------------------------------------------
-    # Flush to persist the message, then commit to release the advisory lock
-    # so other messages from the same user can be inserted. Sleep briefly,
-    # then check if a newer inbound arrived — if so, let that one respond.
+    # --- 8b. Rapid-fire debounce (rearmable) ---------------------------------
+    # Goal: only the LAST inbound in a burst gets to respond. We poll every
+    # POLL_INTERVAL seconds; if a newer inbound has arrived we bail (that
+    # one will respond instead). If no newer inbound has arrived AND enough
+    # silence has accumulated since the latest inbound (which is us), we
+    # proceed. A MAX_WAIT cap prevents indefinite blocking when the customer
+    # keeps typing.
+    #
+    # Rationale (vs the previous fixed asyncio.sleep(5)): the old logic
+    # measured silence from MY message timestamp, so two messages 5s apart
+    # both passed and both responded — the bug observed in conversation
+    # 3c618dca on May 2 (foto duplicada) and listed as deuda #2 in CLAUDE.md.
     await session.flush()
     await session.commit()
-    await asyncio.sleep(5)
 
-    newer_msg = await session.execute(
-        select(Message.id)
-        .where(
-            Message.conversation_id == conversation.id,
-            Message.direction == "inbound",
-            Message.created_at > msg_timestamp,
-        )
-        .limit(1)
+    debounce_decision = await _wait_for_silence(
+        session=session,
+        conversation_id=conversation.id,
+        my_msg_timestamp=msg_timestamp,
     )
-    if newer_msg.scalar_one_or_none() is not None:
+    if debounce_decision == "bail":
         logger.info(
-            "Debounce: newer message exists, skipping response for %s",
+            "Debounce: newer message arrived, skipping response for %s",
             chakra_message_id,
         )
         return {"should_respond": False, "reason": "debounce"}
@@ -421,3 +424,79 @@ def _mask_phone(phone: str) -> str:
     if len(phone) <= 4:
         return "****"
     return "*" * (len(phone) - 4) + phone[-4:]
+
+
+# ---------------------------------------------------------------------------
+# Rearmable debounce (paso 8b)
+# ---------------------------------------------------------------------------
+# Tunables. Keep MAX_WAIT comfortably under n8n's HTTP timeout (5 min default).
+DEBOUNCE_POLL_INTERVAL = 2.0     # seconds between polls
+DEBOUNCE_SILENCE_REQUIRED = 5.0  # seconds of silence to proceed
+DEBOUNCE_MAX_WAIT = 15.0         # cap total wait per ingest
+
+
+def evaluate_debounce_state(
+    my_msg_timestamp: datetime,
+    latest_inbound_ts: Optional[datetime],
+    now: datetime,
+    silence_required_seconds: float = DEBOUNCE_SILENCE_REQUIRED,
+) -> str:
+    """Pure decision function for one debounce poll cycle.
+
+    Returns one of:
+      - "proceed": this ingest should respond (silence achieved)
+      - "bail":    a newer inbound arrived; this ingest should debounce
+      - "wait":    keep polling
+
+    The caller controls the actual sleeping and the MAX_WAIT cap.
+    """
+    if latest_inbound_ts is not None and latest_inbound_ts > my_msg_timestamp:
+        return "bail"
+    reference = latest_inbound_ts or my_msg_timestamp
+    elapsed = (now - reference).total_seconds()
+    if elapsed >= silence_required_seconds:
+        return "proceed"
+    return "wait"
+
+
+async def _wait_for_silence(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    my_msg_timestamp: datetime,
+) -> str:
+    """Poll until silence is achieved or a newer inbound arrives.
+
+    Returns "proceed" or "bail". Hits "proceed" automatically after
+    DEBOUNCE_MAX_WAIT seconds even if the customer is still typing —
+    the alternative is unbounded blocking.
+    """
+    loop = asyncio.get_event_loop()
+    started_at = loop.time()
+    while True:
+        await asyncio.sleep(DEBOUNCE_POLL_INTERVAL)
+
+        latest_row = await session.execute(
+            select(func.max(Message.created_at)).where(
+                Message.conversation_id == conversation_id,
+                Message.direction == "inbound",
+            )
+        )
+        latest_ts: Optional[datetime] = latest_row.scalar_one_or_none()
+
+        decision = evaluate_debounce_state(
+            my_msg_timestamp=my_msg_timestamp,
+            latest_inbound_ts=latest_ts,
+            now=datetime.now(timezone.utc),
+        )
+        if decision == "proceed":
+            return "proceed"
+        if decision == "bail":
+            return "bail"
+
+        # Cap total wait so an actively-typing customer eventually gets a reply.
+        if loop.time() - started_at >= DEBOUNCE_MAX_WAIT:
+            logger.warning(
+                "Debounce: hit MAX_WAIT (%.0fs) for conversation %s; proceeding anyway",
+                DEBOUNCE_MAX_WAIT, conversation_id,
+            )
+            return "proceed"
