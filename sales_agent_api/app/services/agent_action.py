@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.core import AuditLog, Client, ClientUser, Conversation, Message, Product
 from app.services.field_validators import validate_extracted_data
 from app.services.goal_strategy import GoalStrategyEngine
+from app.services.operator_notifier import notify_operators
 from app.services.state_machine import (
     InvalidTransitionError,
     validate_transition,
@@ -238,6 +239,32 @@ async def process_agent_action(
                 "Auto-escalated conversation %s: all checkpoints complete",
                 conversation.id,
             )
+
+            # Notify operators via Telegram. Best-effort: never break the
+            # conversation flow on Telegram failures. Synchronous (adds
+            # ~300-800ms to this turn) but only fires once per conversation
+            # at the end of the funnel, so impact is bounded.
+            try:
+                notif = await notify_operators(
+                    session=session,
+                    client_id=client_id,
+                    conversation_id=conversation.id,
+                )
+                if notif.get("sent_count"):
+                    side_effects.append(
+                        f"operator_notified:telegram:{notif['sent_count']}"
+                    )
+                if notif.get("failure_count"):
+                    side_effects.append(
+                        f"warning:operator_notify_partial_failure:{notif['failure_count']}"
+                    )
+                if notif.get("skipped"):
+                    side_effects.append(
+                        f"warning:operator_notify_skipped:{notif['skipped']}"
+                    )
+            except Exception as exc:
+                logger.warning("Operator notification crashed: %s", exc)
+                side_effects.append(f"warning:operator_notify_crashed:{str(exc)[:80]}")
 
         # Refresh strategy snapshot so the conversation row reflects
         # the post-merge state (was H4 in the May 2 review: snapshot stayed

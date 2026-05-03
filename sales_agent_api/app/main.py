@@ -39,23 +39,23 @@ _NO_AUTH_PATHS = {"/health", "/", "/api/docs", "/openapi.json"}
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
-def _bootstrap_openai_key() -> None:
-    """Resolve OPENAI_API_KEY from Key Vault on boot if not already set.
+def _bootstrap_secret(env_var: str, kv_secret_name: str, label: str) -> None:
+    """Resolve a secret from Azure Key Vault on boot if not already in env.
 
     Order:
-      1. OPENAI_API_KEY env var (local dev / CI)
-      2. Azure Key Vault secret named 'openai-key' (production)
+      1. <env_var> env var (local dev / CI)
+      2. Azure Key Vault secret named <kv_secret_name> (production)
 
-    No-op if neither is available — conversation_summary.py degrades gracefully
-    (logs a warning and returns None instead of summarising).
+    No-op if neither is available — callers degrade gracefully (log a
+    warning and skip the feature instead of crashing the app).
     """
-    if os.getenv("OPENAI_API_KEY"):
-        logger.info("OpenAI key: loaded from environment")
+    if os.getenv(env_var):
+        logger.info("%s: loaded from environment", label)
         return
 
     kv_url = os.getenv("KEY_VAULT_URL")
     if not kv_url:
-        logger.warning("OpenAI key: not set, KEY_VAULT_URL absent — summarisation disabled")
+        logger.warning("%s: not set, KEY_VAULT_URL absent — feature disabled", label)
         return
 
     try:
@@ -64,15 +64,16 @@ def _bootstrap_openai_key() -> None:
 
         credential = DefaultAzureCredential(exclude_shared_token_cache_credential=True)
         kv = SecretClient(vault_url=kv_url, credential=credential)
-        os.environ["OPENAI_API_KEY"] = kv.get_secret("openai-key").value
-        logger.info("OpenAI key: loaded from Key Vault (openai-key)")
+        os.environ[env_var] = kv.get_secret(kv_secret_name).value
+        logger.info("%s: loaded from Key Vault (%s)", label, kv_secret_name)
     except Exception as exc:
-        logger.warning("OpenAI key: failed to load from Key Vault: %s", exc)
+        logger.warning("%s: failed to load from Key Vault: %s", label, exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _bootstrap_openai_key()
+    _bootstrap_secret("OPENAI_API_KEY", "openai-key", "OpenAI key")
+    _bootstrap_secret("TELEGRAM_BOT_TOKEN", "telegram-bot-token", "Telegram bot token")
     ok = await ping_db()
     if ok:
         logger.info("Database connection: OK")
