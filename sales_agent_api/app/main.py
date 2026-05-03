@@ -134,9 +134,11 @@ def create_app() -> FastAPI:
     # Register routers
     from app.api.v1.ingest import router as ingest_router
     from app.api.v1.agent import router as agent_router
+    from app.api.v1.internal import router as internal_router
 
     application.include_router(ingest_router, prefix="/api/v1/ingest", tags=["Ingest"])
     application.include_router(agent_router, prefix="/api/v1/agent", tags=["Agent"])
+    application.include_router(internal_router, prefix="/api/v1/internal", tags=["Internal"])
 
     @application.get("/health", tags=["Health"])
     async def health():
