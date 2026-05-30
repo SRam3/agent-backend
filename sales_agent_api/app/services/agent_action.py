@@ -21,10 +21,8 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.core import AuditLog, Client, ClientUser, Conversation, Message, Product
-from app.services.field_validators import validate_extracted_data
+from app.models.core import AuditLog, Client, ClientUser, Conversation, Message
 from app.services.goal_strategy import GoalStrategyEngine
-from app.services.operator_notifier import notify_operators
 from app.services.state_machine import (
     InvalidTransitionError,
     validate_transition,
@@ -111,49 +109,6 @@ async def process_agent_action(
 
     # --- 3. Persist extracted_data → extracted_context with DAG gates --------
     if extracted_data:
-        # 3a. Field-level validators (rejects ill-formed values like
-        # phone="123456" or shipping_city="acá" before they pollute anything)
-        catalog_rows = await session.execute(
-            select(Product.id).where(
-                Product.client_id == client_id,
-                Product.is_available.is_(True),
-            )
-        )
-        valid_product_ids = {str(pid) for pid in catalog_rows.scalars().all()}
-        extracted_data, rejection_warnings = validate_extracted_data(
-            extracted_data, valid_product_ids=valid_product_ids
-        )
-        if rejection_warnings:
-            side_effects.extend(rejection_warnings)
-            for w in rejection_warnings:
-                logger.warning("Field validation rejected: %s", w)
-
-        # 3b. Image-already-sent gate: the system_prompt forbids sending the
-        # product photo more than once per conversation, but during message
-        # bursts two LLM cycles can run in parallel without seeing each
-        # other's outbound and both emit send_image_url. Drop it if any
-        # prior outbound in this conversation already carried it.
-        if extracted_data.get("send_image_url"):
-            prior = await session.execute(
-                select(Message.id)
-                .where(
-                    Message.conversation_id == conversation.id,
-                    Message.direction == "outbound",
-                    Message.extracted_data["send_image_url"].astext.isnot(None),
-                )
-                .limit(1)
-            )
-            image_already_sent = prior.scalar_one_or_none() is not None
-            extracted_data, image_warnings = _filter_send_image_url(
-                extracted_data, image_already_sent=image_already_sent
-            )
-            if image_warnings:
-                side_effects.extend(image_warnings)
-                logger.warning(
-                    "Dropped send_image_url for conversation %s: prior outbound already carried it",
-                    conversation.id,
-                )
-
         strategy_updates = {
             k: v for k, v in extracted_data.items()
             if k in STRATEGY_FIELDS and v
@@ -239,54 +194,6 @@ async def process_agent_action(
                 "Auto-escalated conversation %s: all checkpoints complete",
                 conversation.id,
             )
-
-            # Notify operators via Telegram. Best-effort: never break the
-            # conversation flow on Telegram failures. Synchronous (adds
-            # ~300-800ms to this turn) but only fires once per conversation
-            # at the end of the funnel, so impact is bounded.
-            try:
-                notif = await notify_operators(
-                    session=session,
-                    client_id=client_id,
-                    conversation_id=conversation.id,
-                )
-                if notif.get("sent_count"):
-                    side_effects.append(
-                        f"operator_notified:telegram:{notif['sent_count']}"
-                    )
-                if notif.get("failure_count"):
-                    side_effects.append(
-                        f"warning:operator_notify_partial_failure:{notif['failure_count']}"
-                    )
-                if notif.get("skipped"):
-                    side_effects.append(
-                        f"warning:operator_notify_skipped:{notif['skipped']}"
-                    )
-            except Exception as exc:
-                logger.warning("Operator notification crashed: %s", exc)
-                side_effects.append(f"warning:operator_notify_crashed:{str(exc)[:80]}")
-
-        # Refresh strategy snapshot so the conversation row reflects
-        # the post-merge state (was H4 in the May 2 review: snapshot stayed
-        # at the value from the previous ingest, showing 60% progress on a
-        # conversation that had auto-escalated).
-        await session.execute(
-            update(Conversation)
-            .where(Conversation.id == conversation.id)
-            .values(
-                current_checkpoint=directive.current_checkpoint,
-                progress_pct=directive.progress_pct,
-                strategy_snapshot={
-                    "goal": directive.goal,
-                    "progress_pct": directive.progress_pct,
-                    "current_checkpoint": directive.current_checkpoint,
-                    "missing_fields": directive.missing_fields,
-                    "completed_checkpoints": directive.completed_checkpoints,
-                },
-            )
-        )
-        conversation.current_checkpoint = directive.current_checkpoint
-        conversation.progress_pct = directive.progress_pct
 
     # --- 5. Apply proposed_transition (if any) -------------------------------
     if proposed_transition and proposed_transition != conversation.state:
@@ -402,24 +309,6 @@ async def _merge_profile(
         .where(ClientUser.id == client_user_id)
         .values(profile=profile)
     )
-
-
-def _filter_send_image_url(
-    extracted_data: dict,
-    image_already_sent: bool,
-) -> tuple[dict, list[str]]:
-    """Drop send_image_url from extracted_data if a prior outbound in the
-    same conversation already carried one. Returns (clean_data, warnings).
-
-    Pure function so it can be unit-tested without a DB. The DB query that
-    determines image_already_sent lives in process_agent_action.
-    """
-    if not extracted_data.get("send_image_url"):
-        return extracted_data, []
-    if not image_already_sent:
-        return extracted_data, []
-    clean = {k: v for k, v in extracted_data.items() if k != "send_image_url"}
-    return clean, ["warning:image_already_sent"]
 
 
 async def _bump_lifecycle_stage(
