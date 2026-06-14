@@ -211,6 +211,21 @@ def test_summary_missing_quantity_and_grind():
     assert "✗ preferencia de molido (grano/molido)" in result
 
 
+def test_summary_shows_roast_when_collected():
+    result = format_conversation_summary({}, {"roast_preference": "medio"})
+    assert "✓ Preferencia de tueste: medio" in result
+
+
+def test_summary_never_requests_roast_when_absent():
+    """Café de tueste único: roast shows ✓ if volunteered, but is NEVER asked
+    for proactively, so it must not appear in the 'Aún falta recopilar' list."""
+    result = format_conversation_summary({}, {"product_id": "abc"})
+    missing_lines = [ln for ln in result.splitlines() if ln.strip().startswith("✗")]
+    assert not any("tueste" in ln.lower() for ln in missing_lines)
+    # And no roast label at all when not collected
+    assert "Preferencia de tueste" not in result
+
+
 # ---------------------------------------------------------------------------
 # _format_price
 # ---------------------------------------------------------------------------

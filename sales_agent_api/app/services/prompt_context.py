@@ -107,17 +107,21 @@ def format_business_context(
 
 
 # Campos del pedido ordenados según el DAG de close_sale. La tupla es
-# (clave en extracted_context, etiqueta humana, etiqueta corta para "FALTA").
-_ORDER_FIELDS: tuple[tuple[str, str, str], ...] = (
-    ("product_id",          "Producto",             "producto"),
-    ("quantity",            "Cantidad",             "cantidad (número de bolsas)"),
-    ("grind_preference",    "Preferencia de molido","preferencia de molido (grano/molido)"),
-    ("full_name",           "Nombre completo",      "nombre completo"),
-    ("phone",               "Teléfono",             "teléfono"),
-    ("shipping_city",       "Ciudad",               "ciudad"),
-    ("shipping_address",    "Dirección",            "dirección"),
-    ("user_confirmation",   "Confirmación del cliente", "confirmación del cliente"),
-    ("payment_confirmation","Pago confirmado",      "comprobante de pago"),
+# (clave en extracted_context, etiqueta humana, etiqueta corta para "FALTA",
+#  request_if_missing). Si request_if_missing es False, el campo se muestra con
+# ✓ cuando el cliente lo menciona, pero NUNCA aparece en "Aún falta recopilar"
+# (p.ej. tueste: el café es de tueste único, no se pide proactivamente).
+_ORDER_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
+    ("product_id",          "Producto",             "producto",                              True),
+    ("quantity",            "Cantidad",             "cantidad (número de bolsas)",           True),
+    ("grind_preference",    "Preferencia de molido","preferencia de molido (grano/molido)",  True),
+    ("roast_preference",    "Preferencia de tueste","",                                      False),
+    ("full_name",           "Nombre completo",      "nombre completo",                       True),
+    ("phone",               "Teléfono",             "teléfono",                              True),
+    ("shipping_city",       "Ciudad",               "ciudad",                                True),
+    ("shipping_address",    "Dirección",            "dirección",                             True),
+    ("user_confirmation",   "Confirmación del cliente", "confirmación del cliente",          True),
+    ("payment_confirmation","Pago confirmado",      "comprobante de pago",                   True),
 )
 
 
@@ -247,11 +251,11 @@ def format_conversation_summary(
 
     collected = []
     missing = []
-    for key, label, short in _ORDER_FIELDS:
+    for key, label, short, request_if_missing in _ORDER_FIELDS:
         value = ctx.get(key)
         if value:
             collected.append((label, value))
-        else:
+        elif request_if_missing:
             missing.append(short)
 
     if collected:
