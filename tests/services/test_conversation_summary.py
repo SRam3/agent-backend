@@ -12,6 +12,8 @@ Here we cover:
 """
 import sys
 import os
+import asyncio
+import logging
 import uuid
 from types import SimpleNamespace
 
@@ -21,7 +23,9 @@ from app.services.conversation_summary import (
     SUMMARY_SCHEMA,
     _build_system_prompt,
     _build_user_prompt,
+    get_summary_failure_count,
     needs_summary,
+    summarize_conversation,
 )
 
 
@@ -157,6 +161,21 @@ def test_user_prompt_collapses_newlines():
     assert "linea1 linea2 linea3" in out
 
 
+def test_user_prompt_carries_full_order_after_p2():
+    """P4 depends on P2: now that quantity/grind persist to extracted_context,
+    a reconstructed summary input sees the complete order, not just product_id."""
+    conv = _fake_conversation(
+        extracted={
+            "product_id": "p-uuid",
+            "quantity": 2,
+            "grind_preference": "grano",
+        }
+    )
+    out = _build_user_prompt(conv, [_fake_message("inbound", "hola")], {})
+    assert "quantity: 2" in out
+    assert "grind_preference: grano" in out
+
+
 # ---------------------------------------------------------------------------
 # needs_summary
 # ---------------------------------------------------------------------------
@@ -180,3 +199,97 @@ def test_needs_summary_false_when_summary_matches_conversation():
     conv_id = uuid.uuid4()
     profile = {"last_conversation_summary": {"conversation_id": str(conv_id)}}
     assert needs_summary(profile, conv_id) is False
+
+
+# ---------------------------------------------------------------------------
+# P4 — lazy-compaction failure is swallowed but must be OBSERVABLE.
+#
+# Reproduces summarize_conversation against a 4-message fixture (the shape of
+# the 3-may conversation) with a summarizer that raises — the same path that
+# silently emptied client_users.profile in prod. Asserts the failure now:
+#   - returns None (chat turn still survives — never break the caller), and
+#   - is logged at ERROR with a stack trace, and
+#   - increments the failure counter (DEUDA #3 observability).
+# ---------------------------------------------------------------------------
+class _FakeResult:
+    def __init__(self, scalar=None, scalars_list=None):
+        self._scalar = scalar
+        self._scalars_list = scalars_list or []
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._scalars_list
+
+
+class _FakeSession:
+    """Returns queued results in call order. Enough for the read-only path of
+    summarize_conversation up to the (failing) LLM call."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls = 0
+
+    async def execute(self, *args, **kwargs):
+        result = self._results[self.calls]
+        self.calls += 1
+        return result
+
+
+def _four_message_fixture():
+    conv = SimpleNamespace(
+        id=uuid.uuid4(),
+        client_id=uuid.uuid4(),
+        client_user_id=uuid.uuid4(),
+        state="active",
+        current_checkpoint="product_matched",
+        progress_pct=20,
+        extracted_context={"product_id": "p-uuid", "quantity": 2},
+    )
+    messages = [
+        SimpleNamespace(direction="inbound", content="Hola, venden café?"),
+        SimpleNamespace(direction="outbound", content="Sí, Café Arenillo 340g."),
+        SimpleNamespace(direction="inbound", content="Quiero 2 bolsas en grano"),
+        SimpleNamespace(direction="outbound", content="Perfecto, ¿a qué ciudad?"),
+    ]
+    session = _FakeSession([
+        _FakeResult(scalar=conv),            # select(Conversation)
+        _FakeResult(scalars_list=messages),  # select(Message)
+        _FakeResult(scalars_list=[]),        # select(Product)
+    ])
+    return session, conv
+
+
+def test_compaction_failure_is_swallowed_but_returns_none():
+    session, conv = _four_message_fixture()
+
+    async def boom(system_prompt, user_prompt):
+        # Representative of a prod failure (egress block / 4xx / parse).
+        raise ConnectionError("simulated failure reaching api.openai.com")
+
+    before = get_summary_failure_count()
+    result = asyncio.run(summarize_conversation(session, conv.id, llm=boom))
+
+    assert result is None  # caller (ingest) keeps working
+    assert get_summary_failure_count() == before + 1
+
+
+def test_compaction_failure_is_logged_at_error_with_traceback(caplog):
+    session, conv = _four_message_fixture()
+
+    async def boom(system_prompt, user_prompt):
+        raise ConnectionError("simulated failure reaching api.openai.com")
+
+    with caplog.at_level(logging.ERROR, logger="app.services.conversation_summary"):
+        asyncio.run(summarize_conversation(session, conv.id, llm=boom))
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert errors, "compaction failure must log at ERROR, not warning"
+    rec = errors[-1]
+    assert "LLM call FAILED" in rec.getMessage()
+    assert "ConnectionError" in rec.getMessage()
+    assert rec.exc_info is not None  # stack trace attached

@@ -33,6 +33,17 @@ from app.models.core import ClientUser, Conversation, Message, Product
 
 logger = logging.getLogger(__name__)
 
+# Running count of swallowed summarisation failures since process start. The
+# compaction is best-effort (it must never break a chat turn), but a silent
+# failure means the business memory dies quietly (DEUDA #3). Until real metrics
+# exist, this lets ops grep/inspect how often it's failing.
+_summary_failure_count = 0
+
+
+def get_summary_failure_count() -> int:
+    """Number of summarisation failures swallowed since process start."""
+    return _summary_failure_count
+
 
 # ---------------------------------------------------------------------------
 # Structured-output schema (OpenAI json_schema, strict mode)
@@ -208,9 +219,16 @@ async def summarize_conversation(
     try:
         summary = await summarizer(system_prompt, user_prompt)
     except Exception as exc:  # network, JSON, missing key — never break the caller
-        logger.warning(
-            "summarize_conversation: LLM call failed for %s: %s",
-            conversation_id, exc,
+        # Best-effort: we still swallow so the chat turn survives, but the
+        # failure must be OBSERVABLE — error level, exception type, stack trace,
+        # and a running counter — instead of a warning nobody reads (DEUDA #3).
+        global _summary_failure_count
+        _summary_failure_count += 1
+        logger.error(
+            "summarize_conversation: LLM call FAILED for %s "
+            "(failure #%d this process) — %s: %s",
+            conversation_id, _summary_failure_count, type(exc).__name__, exc,
+            exc_info=True,
         )
         return None
 
