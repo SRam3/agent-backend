@@ -21,7 +21,7 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.core import AuditLog, Client, ClientUser, Conversation, Message
+from app.models.core import AuditLog, Client, ClientUser, Conversation, Message, Product
 from app.services.goal_strategy import GoalStrategyEngine
 from app.services.state_machine import (
     InvalidTransitionError,
@@ -31,11 +31,20 @@ from app.services.state_machine import (
 logger = logging.getLogger(__name__)
 
 # Fields from extracted_data that are persisted to conversation.extracted_context
-# so the GoalStrategyEngine can track progress across turns.
+# so the GoalStrategyEngine can track progress across turns. These ARE the DAG
+# checkpoints — adding to this set changes close_sale behaviour.
 STRATEGY_FIELDS = {
     "product_id", "full_name", "phone",
     "shipping_address", "shipping_city",
     "user_confirmation", "payment_confirmation",
+}
+
+# Non-DAG order details the customer volunteers (quantity, grind/roast taste).
+# Persisted to extracted_context in parallel to STRATEGY_FIELDS so the bot stops
+# re-asking what was already said — but the GoalStrategyEngine never treats them
+# as checkpoints (it only reads its own required_fields), so the DAG is untouched.
+ORDER_FIELDS = {
+    "quantity", "grind_preference", "roast_preference",
 }
 
 # Subset of extracted_context fields that describe the person, not the
@@ -64,6 +73,87 @@ class ConversationNotFoundError(AgentActionError):
 
 class StaleContextError(AgentActionError):
     pass
+
+
+# DAG gate requirements — kept here so the pure selector below and the caller
+# share one source of truth.
+_USER_CONFIRMATION_REQUIRES = ("full_name", "phone", "shipping_address", "shipping_city")
+_PAYMENT_CONFIRMATION_REQUIRES = ("user_confirmation", "phone", "shipping_address")
+
+
+def compute_context_updates(
+    extracted_data: dict,
+    current_context: dict,
+) -> tuple[dict, dict, list[dict]]:
+    """Decide which extracted_data fields get merged into extracted_context.
+
+    Pure — no I/O. Lets the persistence decision (including DAG gates) be unit
+    tested without a session.
+
+    Returns ``(accepted, strategy_accepted, rejections)``:
+      - ``accepted``: every field to merge (ORDER_FIELDS + STRATEGY_FIELDS that
+        passed their gates).
+      - ``strategy_accepted``: the subset that are DAG strategy fields — drives
+        profile merge + lifecycle bump in the caller. ORDER_FIELDS never appear
+        here, so they can't trip the engine or the CRM lifecycle.
+      - ``rejections``: ``[{"field", "missing"}]`` for gated slots dropped
+        because their prerequisites weren't met yet.
+    """
+    order_updates = {k: v for k, v in extracted_data.items() if k in ORDER_FIELDS and v}
+    strategy_updates = {k: v for k, v in extracted_data.items() if k in STRATEGY_FIELDS and v}
+    merged = {**current_context, **order_updates, **strategy_updates}
+    rejections: list[dict] = []
+
+    # user_confirmation requires full_name + phone + shipping_address + shipping_city
+    if "user_confirmation" in strategy_updates:
+        missing = [f for f in _USER_CONFIRMATION_REQUIRES if not merged.get(f)]
+        if missing:
+            del strategy_updates["user_confirmation"]
+            rejections.append({"field": "user_confirmation", "missing": missing})
+    # payment_confirmation requires user_confirmation + phone + shipping_address
+    if "payment_confirmation" in strategy_updates:
+        missing = [f for f in _PAYMENT_CONFIRMATION_REQUIRES if not merged.get(f)]
+        if missing:
+            del strategy_updates["payment_confirmation"]
+            rejections.append({"field": "payment_confirmation", "missing": missing})
+
+    accepted = {**order_updates, **strategy_updates}
+    return accepted, strategy_updates, rejections
+
+
+def _coerce_int(value) -> Optional[int]:
+    """Best-effort int from an LLM-supplied value (may be int or string)."""
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_purchase_record(
+    extracted_context: dict,
+    product_price,
+    conversation_id: uuid.UUID,
+    now: datetime,
+) -> dict:
+    """Build a purchase record matching the migration-008 profile contract:
+    ``{date, product_id, quantity, total, conversation_id}``.
+
+    ``total`` is ``quantity * product_price`` when both are known, else None.
+    Pure — no I/O.
+    """
+    quantity = _coerce_int(extracted_context.get("quantity"))
+    total = None
+    if quantity is not None and product_price is not None:
+        total = float(product_price * quantity)
+    return {
+        "date": now.isoformat(),
+        "product_id": extracted_context.get("product_id"),
+        "quantity": quantity,
+        "total": total,
+        "conversation_id": str(conversation_id),
+    }
 
 
 async def process_agent_action(
@@ -109,53 +199,54 @@ async def process_agent_action(
 
     # --- 3. Persist extracted_data → extracted_context with DAG gates --------
     if extracted_data:
-        strategy_updates = {
-            k: v for k, v in extracted_data.items()
-            if k in STRATEGY_FIELDS and v
-        }
-        if strategy_updates:
-            current_context = conversation.extracted_context or {}
-            merged = {**current_context, **strategy_updates}
-            # user_confirmation requires full_name + phone + shipping_address + shipping_city
-            if "user_confirmation" in strategy_updates:
-                missing = [f for f in ("full_name", "phone", "shipping_address", "shipping_city") if not merged.get(f)]
-                if missing:
-                    del strategy_updates["user_confirmation"]
-                    logger.warning("Rejected user_confirmation: missing %s", missing)
-                    side_effects.append(f"warning:premature_summary_missing_{'+'.join(missing)}")
-            # payment_confirmation requires user_confirmation + phone + shipping_address
-            if "payment_confirmation" in strategy_updates:
-                missing = [f for f in ("user_confirmation", "phone", "shipping_address") if not merged.get(f)]
-                if missing:
-                    del strategy_updates["payment_confirmation"]
-                    logger.warning("Rejected payment_confirmation: missing %s", missing)
-        if strategy_updates:
-            new_context = {**(conversation.extracted_context or {}), **strategy_updates}
+        accepted, strategy_accepted, rejections = compute_context_updates(
+            extracted_data, conversation.extracted_context or {}
+        )
+        for rej in rejections:
+            logger.warning("Rejected %s: missing %s", rej["field"], rej["missing"])
+            # Surface a premature user_confirmation as a side-effect so n8n/ops
+            # can see the bot tried to summarise before data was complete.
+            if rej["field"] == "user_confirmation":
+                side_effects.append(
+                    f"warning:premature_summary_missing_{'+'.join(rej['missing'])}"
+                )
+        if accepted:
+            new_context = {**(conversation.extracted_context or {}), **accepted}
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conversation.id)
                 .values(extracted_context=new_context)
             )
             conversation.extracted_context = new_context
-            side_effects.append(f"context_updated:{list(strategy_updates.keys())}")
+            side_effects.append(f"context_updated:{list(accepted.keys())}")
 
-            # Merge stable customer facts into the persistent profile
-            payment_just_confirmed = "payment_confirmation" in strategy_updates
-            await _merge_profile(
-                session,
-                client_user_id=conversation.client_user_id,
-                extracted_context=new_context,
-                payment_just_confirmed=payment_just_confirmed,
-            )
+            # Profile merge + CRM lifecycle bump are driven ONLY by DAG strategy
+            # fields — order details (quantity/grind/roast) never move lifecycle.
+            if strategy_accepted:
+                payment_just_confirmed = "payment_confirmation" in strategy_accepted
+                product_price = None
+                if payment_just_confirmed:
+                    product_price = await _fetch_product_price(
+                        session, client_id, new_context.get("product_id")
+                    )
+                # Merge stable customer facts into the persistent profile
+                await _merge_profile(
+                    session,
+                    client_user_id=conversation.client_user_id,
+                    extracted_context=new_context,
+                    payment_just_confirmed=payment_just_confirmed,
+                    conversation_id=conversation.id,
+                    product_price=product_price,
+                )
 
-            # CRM lifecycle bump: any accepted slot moves a 'new' user to
-            # 'engaged'. A confirmed payment moves them to 'customer'.
-            target_stage = "customer" if payment_just_confirmed else "engaged"
-            await _bump_lifecycle_stage(
-                session,
-                client_user_id=conversation.client_user_id,
-                target=target_stage,
-            )
+                # CRM lifecycle bump: any accepted strategy slot moves a 'new'
+                # user to 'engaged'. A confirmed payment moves them to 'customer'.
+                target_stage = "customer" if payment_just_confirmed else "engaged"
+                await _bump_lifecycle_stage(
+                    session,
+                    client_user_id=conversation.client_user_id,
+                    target=target_stage,
+                )
 
     # --- 4. Auto-escalate when all purchase data is collected ----------------
     if conversation.state != "human_handoff":
@@ -260,16 +351,41 @@ async def process_agent_action(
     }
 
 
+async def _fetch_product_price(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+    product_id,
+) -> Optional[object]:
+    """Look up a product's unit price (Decimal) for the purchase total.
+    Returns None if product_id is missing or not found for this client."""
+    if not product_id:
+        return None
+    try:
+        pid = product_id if isinstance(product_id, uuid.UUID) else uuid.UUID(str(product_id))
+    except (TypeError, ValueError):
+        return None
+    row = await session.execute(
+        select(Product.price).where(
+            Product.id == pid,
+            Product.client_id == client_id,
+        )
+    )
+    return row.scalar_one_or_none()
+
+
 async def _merge_profile(
     session: AsyncSession,
     client_user_id: uuid.UUID,
     extracted_context: dict,
     payment_just_confirmed: bool,
+    conversation_id: Optional[uuid.UUID] = None,
+    product_price: Optional[object] = None,
 ) -> None:
     """Merge stable customer facts from extracted_context into client_users.profile.
 
     On payment_confirmation, also increments purchase_count and appends a
-    lightweight purchase record.
+    purchase record (date, product_id, quantity, total, conversation_id) per
+    the migration-008 profile contract.
     """
     updates: dict = {}
     for ctx_key, profile_key in PROFILE_PERSIST_MAP.items():
@@ -298,10 +414,14 @@ async def _merge_profile(
     if payment_just_confirmed:
         profile["purchase_count"] = int(profile.get("purchase_count", 0)) + 1
         purchases = list(profile.get("purchases", []))
-        purchases.append({
-            "date": datetime.now(timezone.utc).isoformat(),
-            "product_id": extracted_context.get("product_id"),
-        })
+        purchases.append(
+            _build_purchase_record(
+                extracted_context,
+                product_price,
+                conversation_id,
+                datetime.now(timezone.utc),
+            )
+        )
         profile["purchases"] = purchases
 
     await session.execute(
