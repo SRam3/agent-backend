@@ -13,7 +13,7 @@
 --
 -- No schema change. Idempotent: the WHERE guard makes a re-run a no-op.
 --
--- Applied: (pending)
+-- Applied: 2026-06-16 (prod, manually via psql)
 
 UPDATE clients
    SET name = 'Café Arenillo'
