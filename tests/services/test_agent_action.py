@@ -150,6 +150,89 @@ def test_order_field_does_not_satisfy_a_gate():
 
 
 # ---------------------------------------------------------------------------
+# P3 — payment gate must not be permeable to a same-turn rejected confirmation
+# ---------------------------------------------------------------------------
+def test_payment_does_not_sneak_through_when_user_confirmation_rejected_same_turn():
+    """The P3 bug: in ONE turn the LLM sends user_confirmation=true AND
+    payment_confirmation=true, but full_name is missing. user_confirmation is
+    rejected for the missing name; payment_confirmation must NOT pass on the back
+    of a confirmation that did not survive this turn."""
+    ctx = {
+        # full_name deliberately absent
+        "phone": "3001234567",
+        "shipping_address": "Cra 1 # 2-3",
+        "shipping_city": "Manizales",
+    }
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {"user_confirmation": "sí", "payment_confirmation": "comprobante.jpg"}, ctx
+    )
+    assert "user_confirmation" not in accepted
+    assert "payment_confirmation" not in accepted
+    assert "payment_confirmation" not in strategy_accepted
+    assert {r["field"] for r in rejections} == {
+        "user_confirmation",
+        "payment_confirmation",
+    }
+    # payment was rejected specifically because user_confirmation is now absent
+    payment_rej = next(r for r in rejections if r["field"] == "payment_confirmation")
+    assert "user_confirmation" in payment_rej["missing"]
+
+
+def test_payment_passes_when_user_confirmation_came_from_prior_turn():
+    """Regression: a user_confirmation already persisted in a PREVIOUS turn still
+    satisfies payment's prerequisite. Only the same-turn rejected case is blocked —
+    the legitimate payment flow must keep working."""
+    ctx = {
+        "user_confirmation": "sí",  # accepted in a prior turn
+        "phone": "3001234567",
+        "shipping_address": "Cra 1 # 2-3",
+    }
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {"payment_confirmation": "comprobante.jpg"}, ctx
+    )
+    assert accepted.get("payment_confirmation") == "comprobante.jpg"
+    assert strategy_accepted.get("payment_confirmation") == "comprobante.jpg"
+    assert rejections == []
+
+
+def test_payment_passes_when_user_confirmation_valid_same_turn():
+    """When user_confirmation IS valid this turn (all prereqs present) it survives
+    the gate and stays in merged, so a same-turn payment_confirmation still passes.
+    The P3 recompute must not strip an ACCEPTED confirmation."""
+    ctx = {
+        "full_name": "Ana Ruiz",
+        "phone": "3001234567",
+        "shipping_address": "Cra 1 # 2-3",
+        "shipping_city": "Manizales",
+    }
+    accepted, _, rejections = compute_context_updates(
+        {"user_confirmation": "sí", "payment_confirmation": "comprobante.jpg"}, ctx
+    )
+    assert accepted.get("user_confirmation") == "sí"
+    assert accepted.get("payment_confirmation") == "comprobante.jpg"
+    assert rejections == []
+
+
+def test_order_fields_persist_even_when_both_gates_reject():
+    """P2 regression under the P3 change: order details persist regardless of the
+    user/payment gates firing in the same turn."""
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {
+            "quantity": 2,
+            "grind_preference": "molido",
+            "user_confirmation": "sí",
+            "payment_confirmation": "comprobante.jpg",
+        },
+        {},
+    )
+    assert accepted["quantity"] == 2
+    assert accepted["grind_preference"] == "molido"
+    assert "user_confirmation" not in accepted
+    assert "payment_confirmation" not in accepted
+    assert strategy_accepted == {}
+
+
+# ---------------------------------------------------------------------------
 # _coerce_int
 # ---------------------------------------------------------------------------
 def test_coerce_int_handles_int_str_and_garbage():
