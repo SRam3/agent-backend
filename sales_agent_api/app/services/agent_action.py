@@ -101,16 +101,23 @@ def compute_context_updates(
     """
     order_updates = {k: v for k, v in extracted_data.items() if k in ORDER_FIELDS and v}
     strategy_updates = {k: v for k, v in extracted_data.items() if k in STRATEGY_FIELDS and v}
-    merged = {**current_context, **order_updates, **strategy_updates}
     rejections: list[dict] = []
 
     # user_confirmation requires full_name + phone + shipping_address + shipping_city
+    merged = {**current_context, **order_updates, **strategy_updates}
     if "user_confirmation" in strategy_updates:
         missing = [f for f in _USER_CONFIRMATION_REQUIRES if not merged.get(f)]
         if missing:
             del strategy_updates["user_confirmation"]
             rejections.append({"field": "user_confirmation", "missing": missing})
-    # payment_confirmation requires user_confirmation + phone + shipping_address
+
+    # payment_confirmation requires user_confirmation + phone + shipping_address.
+    # Recompute merged AFTER the user_confirmation gate: a user_confirmation that
+    # was rejected THIS turn has just been dropped from strategy_updates, so it
+    # must not count toward payment's prerequisite. (A user_confirmation already
+    # persisted in current_context from a prior turn still counts — it survives
+    # in merged via the current_context spread.)
+    merged = {**current_context, **order_updates, **strategy_updates}
     if "payment_confirmation" in strategy_updates:
         missing = [f for f in _PAYMENT_CONFIRMATION_REQUIRES if not merged.get(f)]
         if missing:
@@ -209,6 +216,14 @@ async def process_agent_action(
             if rej["field"] == "user_confirmation":
                 side_effects.append(
                     f"warning:premature_summary_missing_{'+'.join(rej['missing'])}"
+                )
+            # Likewise surface a premature payment_confirmation. This is the money
+            # step, and the human who inherits the handoff must SEE that a payment
+            # was attempted and rejected rather than have it vanish silently. Kept
+            # as a distinct string from the summary warning above.
+            elif rej["field"] == "payment_confirmation":
+                side_effects.append(
+                    f"warning:premature_payment_missing_{'+'.join(rej['missing'])}"
                 )
         if accepted:
             new_context = {**(conversation.extracted_context or {}), **accepted}
