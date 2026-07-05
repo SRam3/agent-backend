@@ -27,6 +27,7 @@ from app.services.state_machine import (
     InvalidTransitionError,
     validate_transition,
 )
+from app.services.validation import is_plausible_phone
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,14 @@ def compute_context_updates(
     order_updates = {k: v for k, v in extracted_data.items() if k in ORDER_FIELDS and v}
     strategy_updates = {k: v for k, v in extracted_data.items() if k in STRATEGY_FIELDS and v}
     rejections: list[dict] = []
+
+    # phone must be a plausible international number (E.164-lax, ADR-008):
+    # 7-15 digits. Gated BEFORE merged is computed so garbage rejected this
+    # turn can't count toward user_confirmation/payment prerequisites either.
+    # The rejection carries no phone value — it must never reach logs.
+    if "phone" in strategy_updates and not is_plausible_phone(strategy_updates["phone"]):
+        del strategy_updates["phone"]
+        rejections.append({"field": "phone", "missing": ["plausible_format"]})
 
     # user_confirmation requires full_name + phone + shipping_address + shipping_city
     merged = {**current_context, **order_updates, **strategy_updates}
@@ -225,6 +234,10 @@ async def process_agent_action(
                 side_effects.append(
                     f"warning:premature_payment_missing_{'+'.join(rej['missing'])}"
                 )
+            # An implausible phone (ADR-008): dropped, not persisted. The bot
+            # keeps the conversation going (fail-safe) and ops sees the drop.
+            elif rej["field"] == "phone":
+                side_effects.append("warning:invalid_phone_rejected")
         if accepted:
             new_context = {**(conversation.extracted_context or {}), **accepted}
             await session.execute(
