@@ -125,9 +125,30 @@ _ORDER_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
 )
 
 
+def _language_instruction(language: str | None) -> str | None:
+    """Línea de INSTRUCCIÓN DE IDIOMA. Una sola fuente para el texto: la usan
+    tanto el perfil de cliente recurrente como el de cliente nuevo (ADR-008)."""
+    if language == "en":
+        return "INSTRUCCIÓN DE IDIOMA: el cliente escribe en INGLÉS. Respóndele en inglés."
+    if language == "es":
+        return "INSTRUCCIÓN DE IDIOMA: el cliente escribe en español. Respóndele en español."
+    return None
+
+
+def format_language_directive(language: str) -> str:
+    """Línea de máxima prioridad para el INICIO del contexto ensamblado.
+
+    La posición importa: gpt-4o-mini no respeta reglas enterradas en el
+    prompt largo (ADR-008), así que el idioma detectado en vivo va primero.
+    """
+    name = "English" if language == "en" else "Spanish"
+    return f"LANGUAGE (overrides all else): reply in {name}."
+
+
 def format_customer_profile(
     display_name: str | None,
     profile: dict,
+    live_language: str | None = None,
 ) -> str:
     """Bloque de perfil del cliente — qué sabemos de él antes de esta conversación.
 
@@ -135,6 +156,10 @@ def format_customer_profile(
     lo declara explícitamente para que el LLM se presente normalmente. Si es
     recurrente, lo nombra por su nombre de pila y lista compras previas y
     preferencias persistidas.
+
+    ``live_language`` es el idioma detectado en el mensaje entrante de ESTE
+    turno (ADR-008); tiene prioridad sobre ``profile["language"]``, que la
+    compaction puebla de forma diferida.
     """
     profile = profile or {}
     lines = ["=== CLIENTE ==="]
@@ -146,6 +171,9 @@ def format_customer_profile(
     if not profile and not display_name:
         lines.append("Cliente nuevo. No tenemos datos previos.")
         lines.append("INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar.")
+        live_lang_line = _language_instruction(live_language)
+        if live_lang_line:
+            lines.append(live_lang_line)
         return "\n".join(lines)
 
     if profile:
@@ -193,15 +221,15 @@ def format_customer_profile(
                     bits.append(pending["notes"])
                 lines.append(f"  • Quedó a punto de comprar: {', '.join(bits)}")
 
-        # Language + communication style guide the LLM tone/idiom
-        language = profile.get("language")
+        # Language + communication style guide the LLM tone/idiom.
+        # live_language (detected this turn) beats profile.language (deferred).
+        language = live_language or profile.get("language")
         style = profile.get("communication_style")
         if language or style:
             lines.append("")
-            if language == "en":
-                lines.append("INSTRUCCIÓN DE IDIOMA: el cliente escribe en INGLÉS. Respóndele en inglés.")
-            elif language == "es":
-                lines.append("INSTRUCCIÓN DE IDIOMA: el cliente escribe en español. Respóndele en español.")
+            lang_line = _language_instruction(language)
+            if lang_line:
+                lines.append(lang_line)
             if style:
                 style_hint = {
                     "formal": "Usa tono formal (usted, frases completas).",
@@ -225,6 +253,9 @@ def format_customer_profile(
     elif display_name:
         lines.append(f"Cliente nuevo. En WhatsApp aparece como: {display_name}")
         lines.append("INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar.")
+        live_lang_line = _language_instruction(live_language)
+        if live_lang_line:
+            lines.append(live_lang_line)
 
     return "\n".join(lines)
 
@@ -232,6 +263,7 @@ def format_customer_profile(
 def format_conversation_summary(
     user_context: dict,
     extracted_context: dict,
+    live_language: str | None = None,
 ) -> str:
     """Resumen de estado para el LLM en español — perfil + estado del pedido.
 
@@ -244,7 +276,7 @@ def format_conversation_summary(
     profile = user_context.get("profile") or {}
     ctx = extracted_context or {}
 
-    sections = [format_customer_profile(display_name, profile)]
+    sections = [format_customer_profile(display_name, profile, live_language)]
 
     # --- ESTADO DEL PEDIDO --------------------------------------------------
     order_lines = ["=== ESTADO DEL PEDIDO ==="]

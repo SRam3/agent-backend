@@ -39,7 +39,12 @@ from app.services.conversation_summary import (
     summarize_conversation,
 )
 from app.services.goal_strategy import GoalStrategyEngine
-from app.services.prompt_context import format_business_context, format_conversation_summary
+from app.services.language import detect_language
+from app.services.prompt_context import (
+    format_business_context,
+    format_conversation_summary,
+    format_language_directive,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +333,23 @@ async def ingest_message(
         for m in reversed(recent_rows.scalars().all())
     ]
 
+    # --- Live language detection (ADR-008) ------------------------------------
+    # Deterministic, per-turn, independent of the deferred profile compaction.
+    # The directive goes FIRST in conversation_summary: position drives adherence.
+    live_language = detect_language(content)
+    conversation_summary = (
+        format_language_directive(live_language)
+        + "\n\n"
+        + format_conversation_summary(
+            user_context={
+                "display_name": client_user.display_name,
+                "profile": client_user.profile or {},
+            },
+            extracted_context=collected_data,
+            live_language=live_language,
+        )
+    )
+
     return {
         "should_respond": True,
         "conversation_id": conversation.id,
@@ -355,13 +377,7 @@ async def ingest_message(
         },
         "product_catalog": product_catalog,
         "business_context": format_business_context(business_rules, product_catalog),
-        "conversation_summary": format_conversation_summary(
-            user_context={
-                "display_name": client_user.display_name,
-                "profile": client_user.profile or {},
-            },
-            extracted_context=collected_data,
-        ),
+        "conversation_summary": conversation_summary,
         "recent_messages": recent_messages,
     }
 
