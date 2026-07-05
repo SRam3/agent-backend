@@ -233,6 +233,87 @@ def test_order_fields_persist_even_when_both_gates_reject():
 
 
 # ---------------------------------------------------------------------------
+# ADR-008 — phone gate: implausible phones never persist
+# ---------------------------------------------------------------------------
+def test_implausible_phone_rejected():
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {"phone": "hola"}, {}
+    )
+    assert "phone" not in accepted
+    assert "phone" not in strategy_accepted
+    assert rejections == [{"field": "phone", "missing": ["plausible_format"]}]
+
+
+def test_implausible_phone_leaves_rest_of_turn_intact():
+    """Un phone basura no debe frenar el resto del turno: los demás campos
+    persisten como siempre."""
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {"phone": "123", "full_name": "Ana Ruiz", "quantity": 2}, {}
+    )
+    assert "phone" not in accepted
+    assert accepted.get("full_name") == "Ana Ruiz"
+    assert accepted.get("quantity") == 2
+    assert strategy_accepted.get("full_name") == "Ana Ruiz"
+    assert rejections == [{"field": "phone", "missing": ["plausible_format"]}]
+
+
+def test_rejected_phone_does_not_satisfy_user_confirmation_gate():
+    """Un phone rechazado ESTE turno no puede contar como prerequisito de
+    user_confirmation en el mismo turno."""
+    accepted, _, rejections = compute_context_updates(
+        {
+            "phone": "abc",
+            "user_confirmation": "sí",
+            "full_name": "Ana Ruiz",
+            "shipping_address": "Cra 1 # 2-3",
+            "shipping_city": "Manizales",
+        },
+        {},
+    )
+    assert "phone" not in accepted
+    assert "user_confirmation" not in accepted
+    rejected_fields = {r["field"] for r in rejections}
+    assert rejected_fields == {"phone", "user_confirmation"}
+    phone_rej = next(r for r in rejections if r["field"] == "user_confirmation")
+    assert "phone" in phone_rej["missing"]
+
+
+def test_valid_phone_still_persists():
+    """Regresión: un phone plausible sigue persistiendo como hoy."""
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {"phone": "+57 300 123 4567"}, {}
+    )
+    assert accepted.get("phone") == "+57 300 123 4567"
+    assert strategy_accepted.get("phone") == "+57 300 123 4567"
+    assert rejections == []
+
+
+def test_stand_case_phone_passes_the_gate():
+    """El número del stand (14 dígitos) cabe en E.164 y pasa — deliberado."""
+    accepted, _, rejections = compute_context_updates(
+        {"phone": "31071484777779"}, {}
+    )
+    assert accepted.get("phone") == "31071484777779"
+    assert rejections == []
+
+
+def test_phone_already_in_context_is_not_regated():
+    """El gate valida el phone PROPUESTO este turno; uno ya persistido en
+    extracted_context no se toca."""
+    accepted, _, rejections = compute_context_updates(
+        {"user_confirmation": "sí"},
+        {
+            "phone": "basura-previa",
+            "full_name": "Ana Ruiz",
+            "shipping_address": "Cra 1 # 2-3",
+            "shipping_city": "Manizales",
+        },
+    )
+    assert accepted.get("user_confirmation") == "sí"
+    assert rejections == []
+
+
+# ---------------------------------------------------------------------------
 # _coerce_int
 # ---------------------------------------------------------------------------
 def test_coerce_int_handles_int_str_and_garbage():

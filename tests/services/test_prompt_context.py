@@ -320,6 +320,85 @@ def test_profile_block_renders_language_spanish():
     assert "español" in result
 
 
+# ---------------------------------------------------------------------------
+# live_language (ADR-008): idioma detectado en vivo, prioridad sobre profile
+# ---------------------------------------------------------------------------
+
+def test_live_language_english_with_empty_profile():
+    """El caso del stand: cliente NUEVO (profile vacío) escribiendo en inglés.
+    Hoy no se emite instrucción alguna; con live_language debe emitirse."""
+    result = format_customer_profile(None, {}, live_language="en")
+    assert "INSTRUCCIÓN DE IDIOMA" in result
+    assert "INGLÉS" in result
+
+
+def test_live_language_english_with_display_name_only():
+    result = format_customer_profile("John", {}, live_language="en")
+    assert "Cliente nuevo" in result
+    assert "INSTRUCCIÓN DE IDIOMA" in result
+    assert "INGLÉS" in result
+
+
+def test_live_language_beats_profile_language():
+    """live_language (este turno) tiene prioridad sobre profile.language (diferido)."""
+    result = format_customer_profile(
+        "John",
+        {"first_name": "John", "language": "es"},
+        live_language="en",
+    )
+    assert "INGLÉS" in result
+    assert "escribe en español" not in result
+
+
+def test_live_language_spanish_beats_profile_english():
+    """Caso inverso: el perfil dice inglés pero el cliente vuelve al español."""
+    result = format_customer_profile(
+        "Juan",
+        {"first_name": "Juan", "language": "en"},
+        live_language="es",
+    )
+    assert "escribe en español" in result
+    assert "INGLÉS" not in result
+
+
+def test_no_live_language_is_byte_identical_to_current_behavior():
+    """Regresión: sin live_language, la salida es byte-idéntica a la de antes
+    del ADR-008 (snapshots literales del comportamiento previo al cambio)."""
+    assert format_customer_profile(None, {}) == (
+        "=== CLIENTE ===\n"
+        "Cliente nuevo. No tenemos datos previos.\n"
+        "INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar."
+    )
+    assert format_customer_profile("Juan", {}) == (
+        "=== CLIENTE ===\n"
+        "Cliente nuevo. En WhatsApp aparece como: Juan\n"
+        "INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar."
+    )
+    assert format_customer_profile("John", {"first_name": "John", "language": "en"}) == (
+        "=== CLIENTE ===\n"
+        "Cliente que ya conocemos. Datos en archivo:\n"
+        "  • Nombre: John\n"
+        "\n"
+        "INSTRUCCIÓN DE IDIOMA: el cliente escribe en INGLÉS. Respóndele en inglés.\n"
+        "\n"
+        "INSTRUCCIÓN: Dirígete a John por su nombre. No te vuelvas a presentar "
+        "ni preguntes datos que ya tenemos arriba. Saluda con cercanía (cliente recurrente)."
+    )
+
+
+def test_summary_passes_live_language_through():
+    result = format_conversation_summary({}, {}, live_language="en")
+    assert "INSTRUCCIÓN DE IDIOMA" in result
+    assert "INGLÉS" in result
+
+
+def test_format_language_directive():
+    from app.services.prompt_context import format_language_directive
+
+    assert format_language_directive("en") == "LANGUAGE (overrides all else): reply in English."
+    assert format_language_directive("es") == "LANGUAGE (overrides all else): reply in Spanish."
+
+
 def test_profile_block_renders_communication_style():
     casual = format_customer_profile("Juan", {"first_name": "Juan", "communication_style": "casual"})
     assert "tono cálido e informal" in casual
