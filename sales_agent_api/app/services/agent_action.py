@@ -1,6 +1,9 @@
 """Agent action validation service.
 
 After the LLM produces a response, n8n calls this service to:
+  0. Circuit breaker (P8): if the response would be the 3rd consecutive
+     identical outbound, escalate to human_handoff and suppress it
+     (approved=False, empty final_response_text) instead of persisting.
   1. Persist strategy-relevant extracted_data into conversation.extracted_context
      (with DAG gates to enforce data order: user_confirmation needs
      name+phone+address+city; payment_confirmation needs user_confirmation+phone+address)
@@ -80,6 +83,50 @@ class StaleContextError(AgentActionError):
 # share one source of truth.
 _USER_CONFIRMATION_REQUIRES = ("full_name", "phone", "shipping_address", "shipping_city")
 _PAYMENT_CONFIRMATION_REQUIRES = ("user_confirmation", "phone", "shipping_address")
+
+# Circuit breaker (P8): the outbound about to be sent fires the breaker when it
+# is the 3rd consecutive identical response — it equals BOTH of the two most
+# recent outbounds of the same conversation.
+_LOOP_PREVIOUS_OUTBOUNDS = 2
+LOOP_SIDE_EFFECT = "circuit_breaker:loop_detected"
+
+
+def detect_outbound_loop(
+    candidate_text: str,
+    previous_outbound_texts: list[Optional[str]],
+) -> bool:
+    """True when ``candidate_text`` would be the 3rd consecutive identical
+    outbound: both of the two most recent outbounds match it EXACTLY.
+
+    Exact (``==``) comparison by design — no normalisation, no fuzziness — so
+    legitimately similar responses never trip it. A repeated-but-not-consecutive
+    response (A, B, A) never trips it either: with B in between, the two most
+    recent are (B, A), which can't both equal A.
+
+    Pure — no I/O. ``previous_outbound_texts`` is expected newest-first.
+    """
+    if len(previous_outbound_texts) < _LOOP_PREVIOUS_OUTBOUNDS:
+        return False
+    return all(
+        text == candidate_text
+        for text in previous_outbound_texts[:_LOOP_PREVIOUS_OUTBOUNDS]
+    )
+
+
+def _recent_outbound_stmt(client_id: uuid.UUID, conversation_id: uuid.UUID):
+    """Statement for the 2 most recent outbound texts of ONE conversation,
+    newest-first. Kept as a pure builder so tests can assert the tenant
+    filters (client_id + conversation_id) without a live DB."""
+    return (
+        select(Message.content)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.client_id == client_id,
+            Message.direction == "outbound",
+        )
+        .order_by(Message.created_at.desc())
+        .limit(_LOOP_PREVIOUS_OUTBOUNDS)
+    )
 
 
 def compute_context_updates(
@@ -212,6 +259,59 @@ async def process_agent_action(
             f"strategy_version mismatch: expected {conversation.strategy_version}, "
             f"got {strategy_version}"
         )
+
+    # --- 2.5 Circuit breaker: 3rd consecutive identical outbound (P8) --------
+    # Checked BEFORE persisting anything from this turn: a looping turn is
+    # aborted whole (no context merge, no outbound persisted — the messages
+    # trail only records what was actually sent; the two looping outbounds
+    # stay the most recent, so an LLM that keeps insisting stays suppressed).
+    # NOTE: n8n must check approved/final_response_text before sending — that
+    # cut is a known dependency, not implemented here.
+    previous_rows = await session.execute(
+        _recent_outbound_stmt(client_id, conversation.id)
+    )
+    if detect_outbound_loop(response_text, list(previous_rows.scalars().all())):
+        old_state = conversation.state
+        if conversation.state == "active":
+            # Same escalation path as the DAG auto-escalate below —
+            # active → human_handoff is already valid in state_machine.py.
+            await session.execute(
+                update(Conversation)
+                .where(Conversation.id == conversation.id)
+                .values(state="human_handoff")
+            )
+            conversation.state = "human_handoff"
+        # If already in human_handoff, no new transition — but the identical
+        # response is still suppressed (n8n doesn't cut on state yet).
+        side_effects.append(LOOP_SIDE_EFFECT)
+        session.add(
+            AuditLog(
+                client_id=client_id,
+                event_type="circuit_breaker",
+                entity_type="conversation",
+                entity_id=conversation.id,
+                actor_type="system",
+                new_value={
+                    "old_state": old_state,
+                    "new_state": conversation.state,
+                    "reason": "loop_detected",
+                    "identical_count": _LOOP_PREVIOUS_OUTBOUNDS + 1,
+                },
+            )
+        )
+        await session.flush()
+        logger.warning(
+            "Circuit breaker fired on conversation %s: 3rd consecutive "
+            "identical outbound suppressed",
+            conversation.id,
+        )
+        return {
+            "approved": False,
+            "final_response_text": "",
+            "new_state": conversation.state,
+            "side_effects": side_effects,
+            "rejection_reason": "loop_detected",
+        }
 
     # --- 3. Persist extracted_data → extracted_context with DAG gates --------
     if extracted_data:

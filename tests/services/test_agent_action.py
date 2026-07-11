@@ -366,3 +366,223 @@ def test_purchase_record_keys_match_contract():
     assert set(record.keys()) == {
         "date", "product_id", "quantity", "total", "conversation_id",
     }
+
+
+# ---------------------------------------------------------------------------
+# P8 — circuit breaker: 3rd consecutive identical outbound
+# ---------------------------------------------------------------------------
+import asyncio
+from types import SimpleNamespace
+
+from app.models.core import AuditLog, Message
+from app.services.agent_action import (
+    LOOP_SIDE_EFFECT,
+    _recent_outbound_stmt,
+    detect_outbound_loop,
+    process_agent_action,
+)
+
+_SAME = "Lo siento, pero aquí solo hablamos de café. ¿Te interesa algo del menú?"
+
+
+def test_loop_fires_on_third_identical():
+    """2 previous identical outbounds + the same candidate = 3rd → fires."""
+    assert detect_outbound_loop(_SAME, [_SAME, _SAME]) is True
+
+
+def test_loop_does_not_fire_on_second_identical():
+    """Only 1 previous identical: it's the 2nd, not the 3rd → no fire."""
+    assert detect_outbound_loop(_SAME, [_SAME]) is False
+
+
+def test_loop_does_not_fire_with_no_history():
+    assert detect_outbound_loop(_SAME, []) is False
+
+
+def test_loop_does_not_fire_on_non_consecutive_repeat():
+    """A, B, A: with B in between, the two most recent are (B, A) → no fire."""
+    assert detect_outbound_loop("A", ["B", "A"]) is False
+
+
+def test_loop_does_not_fire_on_different_texts():
+    """3 consecutive but different texts → exact comparison never fires."""
+    assert detect_outbound_loop("C", ["B", "A"]) is False
+
+
+def test_loop_comparison_is_exact_not_fuzzy():
+    """A single-character difference is a different response by design."""
+    assert detect_outbound_loop(_SAME, [_SAME, _SAME + " "]) is False
+
+
+def test_recent_outbound_stmt_is_tenant_safe_ordered_and_limited():
+    """The previous-outbounds read must filter by client_id AND conversation_id
+    AND direction='outbound', newest-first, limit 2 — tenant isolation is not
+    optional. Asserted on the compiled statement, no DB needed."""
+    client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    conv_id = uuid.UUID("00000000-0000-0000-0000-000000000009")
+    sql = str(_recent_outbound_stmt(client_id, conv_id))
+    assert "messages.client_id" in sql
+    assert "messages.conversation_id" in sql
+    assert "messages.direction" in sql
+    assert "ORDER BY messages.created_at DESC" in sql
+    assert "LIMIT" in sql
+
+
+# --- stub session: realistic process_agent_action paths without a DB --------
+class _StubResult:
+    def __init__(self, scalar=None, scalars_list=None):
+        self._scalar = scalar
+        self._scalars_list = scalars_list or []
+
+    def scalar_one_or_none(self):
+        return self._scalar
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._scalars_list
+
+
+class _StubSession:
+    """Answers execute() from an ordered queue and records every statement,
+    so tests can assert WHAT was executed on the real code path."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.executed = []
+        self.added = []
+
+    async def execute(self, stmt, params=None):
+        self.executed.append(stmt)
+        if self._results:
+            return self._results.pop(0)
+        return _StubResult()
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        pass
+
+
+_CLIENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+
+def _make_conversation(state="active"):
+    return SimpleNamespace(
+        id=_CONV_ID,
+        client_id=_CLIENT_ID,
+        client_user_id=uuid.uuid4(),
+        state=state,
+        strategy_version=3,
+        extracted_context={},
+        active_goal="close_sale",
+    )
+
+
+def test_breaker_fires_escalates_and_suppresses_response():
+    """Fire path end-to-end: 2 identical previous outbounds + same text →
+    human_handoff, circuit_breaker side_effect, approved=False, empty
+    final_response_text, and NO outbound Message persisted (only AuditLog)."""
+    conversation = _make_conversation(state="active")
+    session = _StubSession(
+        [
+            _StubResult(scalar=conversation),           # load conversation
+            _StubResult(scalars_list=[_SAME, _SAME]),   # 2 previous outbounds
+            # state UPDATE needs no result
+        ]
+    )
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text=_SAME,
+        )
+    )
+
+    assert result["approved"] is False
+    assert result["final_response_text"] == ""
+    assert result["new_state"] == "human_handoff"
+    assert result["side_effects"] == [LOOP_SIDE_EFFECT]
+    assert result["rejection_reason"] == "loop_detected"
+    assert conversation.state == "human_handoff"
+
+    # the previous-outbounds read on the real path is exactly the tenant-safe
+    # builder statement (client_id + conversation_id + direction filters)
+    assert str(session.executed[1]) == str(_recent_outbound_stmt(_CLIENT_ID, _CONV_ID))
+
+    # the 3rd identical outbound is NOT persisted; the audit trail is
+    assert not any(isinstance(obj, Message) for obj in session.added)
+    audit = [obj for obj in session.added if isinstance(obj, AuditLog)]
+    assert len(audit) == 1
+    assert audit[0].event_type == "circuit_breaker"
+    assert audit[0].new_value["reason"] == "loop_detected"
+    # the audit payload carries the count, never the response content
+    assert _SAME not in str(audit[0].new_value)
+
+
+def test_breaker_suppresses_without_transition_when_already_handed_off():
+    """Already in human_handoff (n8n doesn't cut on state yet): the identical
+    response is still suppressed, but no new transition is attempted."""
+    conversation = _make_conversation(state="human_handoff")
+    session = _StubSession(
+        [
+            _StubResult(scalar=conversation),
+            _StubResult(scalars_list=[_SAME, _SAME]),
+        ]
+    )
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text=_SAME,
+        )
+    )
+
+    assert result["approved"] is False
+    assert result["new_state"] == "human_handoff"
+    assert result["side_effects"] == [LOOP_SIDE_EFFECT]
+    # only the 2 selects ran — no state UPDATE was issued
+    assert len(session.executed) == 2
+    assert not any(isinstance(obj, Message) for obj in session.added)
+
+
+def test_no_fire_normal_flow_persists_outbound():
+    """Regression: non-consecutive repeat (B, A then A again) does NOT fire —
+    the turn flows normally, approved=True, outbound persisted."""
+    conversation = _make_conversation(state="active")
+    client = SimpleNamespace(business_rules={})
+    session = _StubSession(
+        [
+            _StubResult(scalar=conversation),            # load conversation
+            _StubResult(scalars_list=["B", "A"]),        # previous outbounds
+            _StubResult(scalar=client),                  # client for auto-escalate
+        ]
+    )
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text="A",
+        )
+    )
+
+    assert result["approved"] is True
+    assert result["final_response_text"] == "A"
+    assert result["new_state"] == "active"
+    assert LOOP_SIDE_EFFECT not in result["side_effects"]
+
+    outbound = [obj for obj in session.added if isinstance(obj, Message)]
+    assert len(outbound) == 1
+    assert outbound[0].direction == "outbound"
+    assert outbound[0].content == "A"
