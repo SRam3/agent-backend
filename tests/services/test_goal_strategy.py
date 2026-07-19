@@ -233,3 +233,60 @@ def test_19_no_intent_checkpoint_remains():
         },
     )
     assert d2.all_complete
+
+
+# ---------------------------------------------------------------------------
+# ORDER_FIELDS capture orientation (opportunistic, pre-product phase only)
+# ---------------------------------------------------------------------------
+
+def test_20_order_details_line_in_pre_product_phase():
+    """While product_id is unresolved, the directive orients ORDER_FIELDS capture."""
+    d = engine.compute("close_sale", {})
+    prompt = d.to_prompt()
+    assert "ORDER DETAILS" in prompt
+    assert "grind_preference" in prompt
+    assert "quantity" in prompt
+    # Also when other data arrived first but product is still unresolved
+    d2 = engine.compute("close_sale", {"full_name": "Juan", "phone": "3001234567"})
+    assert "ORDER DETAILS" in d2.to_prompt()
+
+
+def test_21_order_details_line_gone_after_product_matched():
+    """Once product_id is set, the line disappears in every later phase."""
+    base = {"product_id": "abc"}
+    phases = [
+        base,  # lead_qualified active
+        {**base, "full_name": "Juan", "phone": "3001234567"},  # shipping active
+        {**base, "full_name": "Juan", "phone": "3001234567",
+         "shipping_address": "Calle 10", "shipping_city": "Manizales"},  # user_confirmed active
+        {**base, "full_name": "Juan", "phone": "3001234567",
+         "shipping_address": "Calle 10", "shipping_city": "Manizales",
+         "user_confirmation": True},  # payment active
+        {**base, "full_name": "Juan", "phone": "3001234567",
+         "shipping_address": "Calle 10", "shipping_city": "Manizales",
+         "user_confirmation": True, "payment_confirmation": True},  # all_complete
+    ]
+    for data in phases:
+        assert "ORDER DETAILS" not in engine.compute("close_sale", data).to_prompt()
+
+
+def test_22_order_details_is_prompt_text_only():
+    """The orientation never alters DAG behaviour: checkpoint, missing fields
+    and progress are identical to what the engine reported pre-fix."""
+    d = engine.compute("close_sale", {})
+    assert d.current_checkpoint == "product_matched"
+    assert d.missing_fields == ["product_id"]
+    assert d.progress_pct == 0
+    d2 = engine.compute("close_sale", {"quantity": 2, "grind_preference": "molido"})
+    # ORDER_FIELDS in context never complete a checkpoint nor move progress
+    assert d2.current_checkpoint == "product_matched"
+    assert d2.progress_pct == 0
+
+
+def test_23_order_details_wording_captures_not_asks():
+    """The line orients capture of volunteered data — it must not instruct
+    the LLM to ask for grind/roast/quantity."""
+    prompt = engine.compute("close_sale", {}).to_prompt()
+    assert "if the customer mentions" in prompt
+    assert "Do NOT ask for these proactively" in prompt
+    assert "ask for grind" not in prompt
