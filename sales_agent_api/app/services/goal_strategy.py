@@ -70,6 +70,19 @@ class StrategyDirective:
             lines.append(
                 f"HINT (low priority, only when the conversation flows there naturally): {self.next_action.lower()}",
             )
+            # Order details (grind/roast/quantity) are ORDER_FIELDS, not DAG
+            # checkpoints — the engine never asks for them. But the early,
+            # product-talk phase is exactly when customers volunteer them, and
+            # the generic extraction line buried in the system prompt gets
+            # ignored (see diagnostico-slot-perdido-2026-07-15). Orient capture
+            # here, pre-product only; once product_id is set the line drops out
+            # so later phases stay untouched.
+            if "product_id" in self.missing_fields:
+                lines.append(
+                    "ORDER DETAILS: if the customer mentions grind, roast, or quantity, "
+                    "capture it in extracted_data (grind_preference / roast_preference / quantity). "
+                    "Do NOT ask for these proactively — only capture what they volunteer."
+                )
 
         lines += [
             "IMPORTANT: Your priority is to have a warm, natural conversation. Answer what the customer asks.",
