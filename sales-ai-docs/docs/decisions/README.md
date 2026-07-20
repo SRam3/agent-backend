@@ -80,3 +80,5 @@ Ej: "Cuando tengamos 3+ clientes con catálogo > 50 SKUs."
 | 005 | Perfil persistente en client_users | Accepted | 2026-04-21 |
 | 006 | VARCHAR + CHECK sobre ENUMs nativos | Accepted | 2026-04-03 |
 | 007 | Colapso de state machine de 7 a 3 estados | Accepted | 2026-04-19 |
+| 008 | Soporte multiidioma e internacional | Accepted | 2026-06-16 |
+| 009 | Cierre del lazo de handoff humano | Accepted | 2026-07-19 |

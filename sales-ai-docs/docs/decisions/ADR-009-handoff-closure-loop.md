@@ -1,14 +1,14 @@
 # ADR-009 — Cierre del lazo de handoff humano (confirmación de pago, notificación y corte)
 
-- **Estatus**: Propuesto
+- **Estatus**: Aceptado (implementado 2026-07-19/20 — ver Notas de implementación)
 - **Fecha**: 2026-07-19
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: postmortem de la primera venta cerrada (`docs/postmortems/`), que reveló
   que el tramo final del flujo de venta nunca ha corrido solo.
 
-> Numeración: siguiente ADR libre tras 008 (multiidioma). Confirmar que no colisione con
-> reservas informales (`purchase_intents` fue citado como "008" en ADRs viejos pero se
-> reasignó). Ajustar al mergear si hace falta.
+> Numeración: resuelta — 009 quedó para esta decisión sin colisión (`purchase_intents`,
+> citado informalmente como "008" en ADRs viejos, tomará el siguiente número libre
+> cuando se decida; ver nota en ADR-008).
 
 ---
 
@@ -148,6 +148,47 @@ por conversación nueva ya está soportada.
 
 Cada paso: un commit, su test donde aplique, verificado antes del siguiente. Los pasos 1-3
 son backend (tu terreno fuerte); 2 toca n8n; 4-5 son la pieza nueva de Telegram.
+
+## Notas de implementación (as-built, 2026-07-19/20)
+
+Decisiones tomadas durante la implementación (confirmadas por el decisor):
+
+1. **Ruta y auth**: `POST /api/v1/operator/confirm-payment` bajo namespace `/operator/*`
+   propio, con `SALES_AI_OPERATOR_TOKEN` **escopado por path en el middleware**: el token
+   de servicio no abre `/operator/*` ni el de operador abre agent/ingest; sin token
+   configurado la superficie falla cerrada (500). Secretos: `sales-ai-operator-token` y
+   `telegram-bot-token` en Key Vault; env var cableada en el Container App vía secretref
+   + managed identity.
+2. **Idempotencia**: re-confirmar una venta ya cerrada → `200 {already_confirmed: true}`
+   sin duplicar `purchases` (seguro para double-tap/reintentos de Telegram).
+3. **Precondición estricta**: sin `user_confirmation` en el contexto → `409
+   order_not_confirmed` (protege contra confirmar la conversación equivocada, p.ej. un
+   handoff por circuit breaker con contexto vacío). Una conversación `closed` por otra
+   vía no es re-confirmable (`409 invalid_state`).
+4. **La piel vive en n8n** (cero dependencias nuevas en backend): aviso en
+   `cafe_arenillo_v2` + workflow `operator_confirm_telegram` (Telegram Trigger →
+   validación → endpoint). Tokens como credenciales n8n (`telegram_arenillo_bot`,
+   `sales_ai_operator_auth`).
+5. **Extensión al §2 pedida por el decisor**: el aviso al operador dispara por
+   `checkpoint_completed:user_confirmed` (venta lista, con botón "Confirmar pago") **y**
+   por `circuit_breaker:loop_detected` (loop P8, solo aviso) — cierra el hueco de que el
+   breaker escalaba sin notificar.
+6. **Gatillo del aviso pre-pago**: side_effect `checkpoint_completed:user_confirmed`
+   emitido solo en la TRANSICIÓN (helper `is_new_user_confirmation`) — el LLM re-propone
+   el contexto acumulado cada turno y sin ese guard se re-notificaría cada turno.
+7. **Corte en n8n (§3), as-built**: (a) `IF Should Respond` corta antes del LLM si
+   `conversation_state ∈ {human_handoff, closed}`; (b) `Process Backend Response` computa
+   `should_send = approved && new_state ∉ {human_handoff, closed} && texto no vacío` y
+   expone `suppressed_reason`; (c) la rama false de `IF Approved to Send` se recableó a
+   `IF Escalated` para que un turno suprimido por escalamiento NO pierda la notificación
+   al dueño (regresión detectada y evitada durante la implementación).
+8. **Seguridad del callback**: se autoriza contra el `from.id` de quien PULSA el botón
+   (chat_id del operador, validado en `Validate Operator`), no solo se usa como destino;
+   fail-closed. Webhook del bot registrado por n8n al activar el trigger.
+
+Verificación pendiente: paso 6 (e2e con pedido real) tras el merge/deploy del backend.
+Exports as-built en `n8n_workflow/` (`cafe_arenillo_v2.json`, `operator_confirm_telegram.json`,
+snapshot pre-corte `cafe_arenillo_v2.pre-adr009-cut.json`).
 
 ## Cuándo revisar
 
