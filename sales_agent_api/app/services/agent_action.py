@@ -184,6 +184,19 @@ def compute_context_updates(
     return accepted, strategy_updates, rejections
 
 
+def is_new_user_confirmation(strategy_accepted: dict, prior_context: dict) -> bool:
+    """True only on the turn user_confirmation FIRST lands (ADR-009 §2).
+
+    Pure — the transition (not the state) is what triggers the operator's
+    pre-payment notice; the LLM re-proposes the full cumulative extracted_data
+    every turn, so presence alone would re-fire on every later turn.
+    """
+    return (
+        "user_confirmation" in strategy_accepted
+        and not prior_context.get("user_confirmation")
+    )
+
+
 def _coerce_int(value) -> Optional[int]:
     """Best-effort int from an LLM-supplied value (may be int or string)."""
     if value is None:
@@ -339,7 +352,11 @@ async def process_agent_action(
             elif rej["field"] == "phone":
                 side_effects.append("warning:invalid_phone_rejected")
         if accepted:
-            new_context = {**(conversation.extracted_context or {}), **accepted}
+            prior_context = conversation.extracted_context or {}
+            newly_user_confirmed = is_new_user_confirmation(
+                strategy_accepted, prior_context
+            )
+            new_context = {**prior_context, **accepted}
             await session.execute(
                 update(Conversation)
                 .where(Conversation.id == conversation.id)
@@ -347,6 +364,8 @@ async def process_agent_action(
             )
             conversation.extracted_context = new_context
             side_effects.append(f"context_updated:{list(accepted.keys())}")
+            if newly_user_confirmed:
+                side_effects.append("checkpoint_completed:user_confirmed")
 
             # Profile merge + CRM lifecycle bump are driven ONLY by DAG strategy
             # fields — order details (quantity/grind/roast) never move lifecycle.

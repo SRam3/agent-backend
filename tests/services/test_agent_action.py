@@ -586,3 +586,25 @@ def test_no_fire_normal_flow_persists_outbound():
     assert len(outbound) == 1
     assert outbound[0].direction == "outbound"
     assert outbound[0].content == "A"
+
+
+# ---------------------------------------------------------------------------
+# is_new_user_confirmation — pre-payment notice trigger (ADR-009 §2)
+# ---------------------------------------------------------------------------
+
+def test_new_user_confirmation_fires_on_transition():
+    from app.services.agent_action import is_new_user_confirmation
+    assert is_new_user_confirmation({"user_confirmation": True}, {}) is True
+
+
+def test_new_user_confirmation_silent_when_already_confirmed():
+    """The LLM re-proposes cumulative data every turn — no re-notification."""
+    from app.services.agent_action import is_new_user_confirmation
+    assert is_new_user_confirmation(
+        {"user_confirmation": True}, {"user_confirmation": True}
+    ) is False
+
+
+def test_new_user_confirmation_silent_without_proposal():
+    from app.services.agent_action import is_new_user_confirmation
+    assert is_new_user_confirmation({"full_name": "Juan"}, {}) is False
