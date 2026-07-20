@@ -2,6 +2,8 @@
 
 Authentication:
   - Service-to-service Bearer token (SALES_AI_SERVICE_TOKEN env var)
+  - Operator Bearer token (SALES_AI_OPERATOR_TOKEN env var) — only valid on
+    /api/v1/operator/* and the only token valid there (ADR-009)
   - Constant-time comparison to prevent timing attacks
 
 Tenant identification:
@@ -31,6 +33,12 @@ logging.basicConfig(
 
 ENV = os.getenv("ENV", "dev")
 SERVICE_TOKEN = os.getenv("SALES_AI_SERVICE_TOKEN", "")
+# Operator surface (/api/v1/operator/*) has its own token (ADR-009): the
+# confirm-payment endpoint is the "a sale was paid" button — the generic
+# service token must not reach it, nor the operator token reach agent/ingest.
+OPERATOR_TOKEN = os.getenv("SALES_AI_OPERATOR_TOKEN", "")
+
+_OPERATOR_PATH_PREFIX = "/api/v1/operator/"
 
 # Endpoints that bypass auth
 _NO_AUTH_PATHS = {"/health", "/", "/api/docs", "/openapi.json"}
@@ -111,12 +119,19 @@ def create_app() -> FastAPI:
             return _unauthorized("Missing or invalid Authorization header")
 
         token = auth_header[len("Bearer "):]
-        if not SERVICE_TOKEN:
-            logger.error("SALES_AI_SERVICE_TOKEN is not configured")
-            return _server_error("Service token not configured")
+        if path.startswith(_OPERATOR_PATH_PREFIX):
+            if not OPERATOR_TOKEN:
+                logger.error("SALES_AI_OPERATOR_TOKEN is not configured")
+                return _server_error("Operator token not configured")
+            expected_token = OPERATOR_TOKEN
+        else:
+            if not SERVICE_TOKEN:
+                logger.error("SALES_AI_SERVICE_TOKEN is not configured")
+                return _server_error("Service token not configured")
+            expected_token = SERVICE_TOKEN
 
-        if not hmac.compare_digest(token.encode(), SERVICE_TOKEN.encode()):
-            return _unauthorized("Invalid service token")
+        if not hmac.compare_digest(token.encode(), expected_token.encode()):
+            return _unauthorized("Invalid token for this surface")
 
         # --- X-Client-ID header ---
         client_id_header = request.headers.get("X-Client-ID", "")
@@ -134,9 +149,11 @@ def create_app() -> FastAPI:
     # Register routers
     from app.api.v1.ingest import router as ingest_router
     from app.api.v1.agent import router as agent_router
+    from app.api.v1.operator import router as operator_router
 
     application.include_router(ingest_router, prefix="/api/v1/ingest", tags=["Ingest"])
     application.include_router(agent_router, prefix="/api/v1/agent", tags=["Agent"])
+    application.include_router(operator_router, prefix="/api/v1/operator", tags=["Operator"])
 
     @application.get("/health", tags=["Health"])
     async def health():
