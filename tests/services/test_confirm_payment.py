@@ -45,6 +45,49 @@ def test_closed_and_paid_is_idempotent():
     assert evaluate_confirmation("closed", ctx) == ALREADY_CONFIRMED
 
 
+# ---------------------------------------------------------------------------
+# Fix venta duplicada — idempotency reads the FACT, not the state
+# ---------------------------------------------------------------------------
+def test_paid_in_human_handoff_is_idempotent():
+    """The exact hole that produced the duplicate sale of 2026-07-20: the legacy
+    LLM path recorded the sale but left the conversation in human_handoff, so a
+    guard tied to `closed` concluded "not confirmed yet" and wrote a SECOND sale.
+    A payment already in context ends it, whatever the state."""
+    ctx = {**CONFIRMED_ORDER_CTX, "payment_confirmation": True}
+    assert evaluate_confirmation("human_handoff", ctx) == ALREADY_CONFIRMED
+
+
+def test_paid_in_active_is_idempotent():
+    ctx = {**CONFIRMED_ORDER_CTX, "payment_confirmation": True}
+    assert evaluate_confirmation("active", ctx) == ALREADY_CONFIRMED
+
+
+def test_bug_sequence_yields_exactly_one_sale():
+    """The 20-jul sequence end to end, in pure logic: the LLM proposes the
+    payment (22:45) and the operator presses the button (22:46).
+
+    Post-fix the LLM proposal never reaches the context, so the operator's
+    confirmation is the FIRST and only one that records a sale — and a second
+    press after it is an idempotent no-op. One sale, not two."""
+    from app.services.agent_action import compute_context_updates
+
+    accepted, _, rejections = compute_context_updates(
+        {"payment_confirmation": "ya pagué"}, CONFIRMED_ORDER_CTX
+    )
+    assert "payment_confirmation" not in accepted
+    assert rejections == [
+        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+    ]
+
+    # the context the operator's button then finds — still unpaid
+    ctx_after_llm = {**CONFIRMED_ORDER_CTX, **accepted}
+    assert evaluate_confirmation("human_handoff", ctx_after_llm) == CONFIRM_OK
+
+    # ...and the sale it records is the only one: a re-press writes nothing
+    ctx_after_operator = {**ctx_after_llm, "payment_confirmation": True}
+    assert evaluate_confirmation("closed", ctx_after_operator) == ALREADY_CONFIRMED
+
+
 def test_active_without_user_confirmation_refused():
     """Strict precondition: nothing to close if the customer never confirmed."""
     ctx = {k: v for k, v in CONFIRMED_ORDER_CTX.items() if k != "user_confirmation"}

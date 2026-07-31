@@ -8,8 +8,10 @@ session-touching parts of process_agent_action belong to integration tests
 Focus:
   - ORDER_FIELDS (quantity/grind/roast) persist alongside STRATEGY_FIELDS.
   - ORDER_FIELDS are NOT strategy/DAG fields → never bump lifecycle/checkpoints.
-  - DAG gates (user_confirmation, payment_confirmation) still reject when their
-    prerequisites are missing (regression guard for P2).
+  - The user_confirmation DAG gate still rejects when its prerequisites are
+    missing (regression guard for P2).
+  - payment_confirmation is OPERATOR-ONLY: an agent turn never accepts it, never
+    records a sale, never promotes to 'customer' (ADR-009 / fix venta duplicada).
   - The purchase record carries quantity + total per the migration-008 contract.
 """
 import sys
@@ -21,6 +23,7 @@ from decimal import Decimal
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../sales_agent_api"))
 
 from app.services.agent_action import (
+    OPERATOR_ONLY_FIELDS,
     ORDER_FIELDS,
     STRATEGY_FIELDS,
     compute_context_updates,
@@ -36,6 +39,14 @@ def test_order_fields_are_disjoint_from_strategy_fields():
     """The whole point: order details must NOT become DAG checkpoints."""
     assert ORDER_FIELDS.isdisjoint(STRATEGY_FIELDS)
     assert ORDER_FIELDS == {"quantity", "grind_preference", "roast_preference"}
+
+
+def test_payment_is_the_only_operator_only_field():
+    """payment_confirmation stays a DAG checkpoint (the engine reads it from
+    extracted_context) but no agent turn may write it — only the operator
+    endpoint does (ADR-009)."""
+    assert OPERATOR_ONLY_FIELDS == {"payment_confirmation"}
+    assert OPERATOR_ONLY_FIELDS <= STRATEGY_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -122,20 +133,28 @@ def test_payment_confirmation_rejected_when_incomplete():
         {"payment_confirmation": "comprobante.jpg"}, {}
     )
     assert "payment_confirmation" not in accepted
-    assert rejections and rejections[0]["field"] == "payment_confirmation"
+    assert rejections == [
+        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+    ]
 
 
-def test_payment_confirmation_accepted_when_prereqs_present():
+def test_payment_confirmation_rejected_even_with_every_prereq_present():
+    """THE invariant of the duplicate-sale fix: prerequisites are irrelevant.
+    The LLM has no authority over a payment, so a perfectly-formed proposal is
+    dropped exactly like an incomplete one — 'ya pagué' is not proof."""
     ctx = {
         "user_confirmation": "sí",
         "phone": "3001234567",
         "shipping_address": "Cra 1 # 2-3",
     }
-    accepted, _, rejections = compute_context_updates(
+    accepted, strategy_accepted, rejections = compute_context_updates(
         {"payment_confirmation": "comprobante.jpg"}, ctx
     )
-    assert accepted.get("payment_confirmation") == "comprobante.jpg"
-    assert rejections == []
+    assert "payment_confirmation" not in accepted
+    assert "payment_confirmation" not in strategy_accepted
+    assert rejections == [
+        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+    ]
 
 
 def test_order_field_does_not_satisfy_a_gate():
@@ -150,13 +169,16 @@ def test_order_field_does_not_satisfy_a_gate():
 
 
 # ---------------------------------------------------------------------------
-# P3 — payment gate must not be permeable to a same-turn rejected confirmation
+# P3 (superseded) — the payment gate is gone: payment is rejected UNCONDITIONALLY,
+# so P3's scenario (payment riding on a same-turn user_confirmation) can no longer
+# exist. These keep the P3 scenarios as regression cases anyway: the guarantee
+# they encoded still holds, now for a stronger reason.
 # ---------------------------------------------------------------------------
 def test_payment_does_not_sneak_through_when_user_confirmation_rejected_same_turn():
     """The P3 bug: in ONE turn the LLM sends user_confirmation=true AND
     payment_confirmation=true, but full_name is missing. user_confirmation is
-    rejected for the missing name; payment_confirmation must NOT pass on the back
-    of a confirmation that did not survive this turn."""
+    rejected for the missing name; payment is rejected for having been proposed
+    at all."""
     ctx = {
         # full_name deliberately absent
         "phone": "3001234567",
@@ -173,15 +195,14 @@ def test_payment_does_not_sneak_through_when_user_confirmation_rejected_same_tur
         "user_confirmation",
         "payment_confirmation",
     }
-    # payment was rejected specifically because user_confirmation is now absent
     payment_rej = next(r for r in rejections if r["field"] == "payment_confirmation")
-    assert "user_confirmation" in payment_rej["missing"]
+    assert payment_rej["missing"] == ["operator_confirmation"]
 
 
-def test_payment_passes_when_user_confirmation_came_from_prior_turn():
-    """Regression: a user_confirmation already persisted in a PREVIOUS turn still
-    satisfies payment's prerequisite. Only the same-turn rejected case is blocked —
-    the legitimate payment flow must keep working."""
+def test_payment_rejected_when_user_confirmation_came_from_prior_turn():
+    """The legitimate-looking case that used to record the sale: order confirmed
+    in a PREVIOUS turn, customer now says they paid. Still rejected — the sale is
+    recorded by the operator endpoint or not at all."""
     ctx = {
         "user_confirmation": "sí",  # accepted in a prior turn
         "phone": "3001234567",
@@ -190,32 +211,36 @@ def test_payment_passes_when_user_confirmation_came_from_prior_turn():
     accepted, strategy_accepted, rejections = compute_context_updates(
         {"payment_confirmation": "comprobante.jpg"}, ctx
     )
-    assert accepted.get("payment_confirmation") == "comprobante.jpg"
-    assert strategy_accepted.get("payment_confirmation") == "comprobante.jpg"
-    assert rejections == []
+    assert "payment_confirmation" not in accepted
+    assert "payment_confirmation" not in strategy_accepted
+    assert rejections == [
+        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+    ]
 
 
-def test_payment_passes_when_user_confirmation_valid_same_turn():
-    """When user_confirmation IS valid this turn (all prereqs present) it survives
-    the gate and stays in merged, so a same-turn payment_confirmation still passes.
-    The P3 recompute must not strip an ACCEPTED confirmation."""
+def test_valid_user_confirmation_survives_alongside_a_rejected_payment():
+    """A payment proposal must not poison the rest of the turn: a
+    user_confirmation with every prerequisite present is still accepted."""
     ctx = {
         "full_name": "Ana Ruiz",
         "phone": "3001234567",
         "shipping_address": "Cra 1 # 2-3",
         "shipping_city": "Manizales",
     }
-    accepted, _, rejections = compute_context_updates(
+    accepted, strategy_accepted, rejections = compute_context_updates(
         {"user_confirmation": "sí", "payment_confirmation": "comprobante.jpg"}, ctx
     )
     assert accepted.get("user_confirmation") == "sí"
-    assert accepted.get("payment_confirmation") == "comprobante.jpg"
-    assert rejections == []
+    assert strategy_accepted.get("user_confirmation") == "sí"
+    assert "payment_confirmation" not in accepted
+    assert rejections == [
+        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+    ]
 
 
-def test_order_fields_persist_even_when_both_gates_reject():
-    """P2 regression under the P3 change: order details persist regardless of the
-    user/payment gates firing in the same turn."""
+def test_order_fields_persist_even_when_confirmation_and_payment_rejected():
+    """P2 regression: order details persist regardless of the user_confirmation
+    gate and the payment drop firing in the same turn."""
     accepted, strategy_accepted, rejections = compute_context_updates(
         {
             "quantity": 2,
@@ -608,3 +633,146 @@ def test_new_user_confirmation_silent_when_already_confirmed():
 def test_new_user_confirmation_silent_without_proposal():
     from app.services.agent_action import is_new_user_confirmation
     assert is_new_user_confirmation({"full_name": "Juan"}, {}) is False
+
+
+# ---------------------------------------------------------------------------
+# Fix venta duplicada — the LLM never closes a sale (on the REAL turn path)
+# ---------------------------------------------------------------------------
+import app.services.agent_action as agent_action_module
+
+# The context as the 20-jul e2e left it right before the bug: order confirmed
+# in a previous turn, everything collected, payment still pending.
+_CONFIRMED_ORDER_CTX = {
+    "product_id": "p-uuid",
+    "full_name": "Ana Ruiz",
+    "phone": "3001234567",
+    "shipping_address": "Cra 1 # 2-3",
+    "shipping_city": "Manizales",
+    "quantity": 2,
+    "user_confirmation": "sí",
+}
+
+
+def _record_profile_calls(monkeypatch) -> dict:
+    """Replace the two profile writers with recorders. Asserting on their
+    arguments is the point: they are the ONLY way a sale reaches the profile."""
+    calls: dict = {}
+
+    async def fake_merge(session, **kwargs):
+        calls["merge"] = kwargs
+
+    async def fake_bump(session, **kwargs):
+        calls["bump"] = kwargs
+
+    monkeypatch.setattr(agent_action_module, "_merge_profile", fake_merge)
+    monkeypatch.setattr(agent_action_module, "_bump_lifecycle_stage", fake_bump)
+    return calls
+
+
+def test_llm_payment_claim_records_no_sale_and_moves_nothing(monkeypatch):
+    """The duplicate-sale bug, replayed on the real path: the customer writes
+    'ya pagué' and the LLM proposes payment_confirmation with every prerequisite
+    already in context. No sale in the profile, no promotion to 'customer', no
+    payment in the context, no escalation — only a visible warning."""
+    conversation = _make_conversation(state="active")
+    conversation.extracted_context = dict(_CONFIRMED_ORDER_CTX)
+    calls = _record_profile_calls(monkeypatch)
+    session = _StubSession(
+        [
+            _StubResult(scalar=conversation),                    # load conversation
+            _StubResult(scalars_list=["B", "A"]),                # previous outbounds
+            _StubResult(),                                       # UPDATE extracted_context
+            _StubResult(scalar=SimpleNamespace(business_rules={})),  # client
+        ]
+    )
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text="Recibido, muchas gracias.",
+            # the LLM re-proposes the cumulative data every turn, payment included
+            extracted_data={**_CONFIRMED_ORDER_CTX, "payment_confirmation": "ya pagué"},
+        )
+    )
+
+    # the claim is dropped but never silent
+    assert "warning:payment_claim_ignored" in result["side_effects"]
+    assert "payment_confirmation" not in conversation.extracted_context
+
+    # no sale recorded, no lifecycle promotion
+    assert calls["merge"]["payment_just_confirmed"] is False
+    assert calls["bump"]["target"] == "engaged"
+
+    # no lifecycle move for the conversation either, and the turn still flows
+    assert conversation.state == "active"
+    assert result["new_state"] == "active"
+    assert not any(s.startswith("escalated:") for s in result["side_effects"])
+    assert result["approved"] is True
+
+
+def test_payment_claim_alone_writes_nothing(monkeypatch):
+    """When the payment claim is the only thing proposed, nothing is persisted:
+    no context UPDATE, no profile write — just the warning."""
+    conversation = _make_conversation(state="active")
+    conversation.extracted_context = dict(_CONFIRMED_ORDER_CTX)
+    calls = _record_profile_calls(monkeypatch)
+    session = _StubSession(
+        [
+            _StubResult(scalar=conversation),
+            _StubResult(scalars_list=["B", "A"]),
+            _StubResult(scalar=SimpleNamespace(business_rules={})),  # client
+        ]
+    )
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text="Recibido, muchas gracias.",
+            extracted_data={"payment_confirmation": True},
+        )
+    )
+
+    assert result["side_effects"] == ["warning:payment_claim_ignored"]
+    assert conversation.extracted_context == _CONFIRMED_ORDER_CTX
+    assert calls == {}
+
+
+def test_closed_conversation_is_never_resurrected_by_auto_escalate():
+    """A turn already in flight when the operator closes the sale still passes the
+    staleness check (confirm_payment does not bump strategy_version) and sees the
+    operator's payment_confirmation → all_complete. It must NOT drag the closed
+    conversation back to human_handoff, where ingest's 24h window would trap the
+    customer's next message in a conversation the bot must not answer."""
+    conversation = _make_conversation(state="closed")
+    conversation.extracted_context = {
+        **_CONFIRMED_ORDER_CTX,
+        "payment_confirmation": True,  # written by the operator endpoint
+    }
+    session = _StubSession(
+        [
+            _StubResult(scalar=conversation),
+            _StubResult(scalars_list=["B", "A"]),
+        ]
+    )
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text="Recibido, muchas gracias.",
+        )
+    )
+
+    assert conversation.state == "closed"
+    assert result["new_state"] == "closed"
+    assert not any(s.startswith("escalated:") for s in result["side_effects"])
+    # the auto-escalate block was never entered: no client lookup, no UPDATE
+    assert len(session.executed) == 2

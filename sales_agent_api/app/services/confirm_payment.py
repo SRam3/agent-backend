@@ -3,9 +3,12 @@
 `payment_confirmed` is the one checkpoint whose truth lives outside the whole
 system: a human looking at a payment receipt. The LLM must never propose it
 ("ya pagué" is not proof) and the backend cannot verify it (it never sees the
-image). This service is the return channel: an authorized operator — via
-whatever skin (Telegram today) — asserts "the payment is real", and the system
-records the sale, closes the conversation and updates the customer profile.
+image). That "must never" is enforced in code, not just declared here: see
+`OPERATOR_ONLY_FIELDS` in agent_action.py, which drops any payment_confirmation
+an agent turn proposes. This service is the return channel: an authorized
+operator — via whatever skin (Telegram today) — asserts "the payment is real",
+and the system records the sale, closes the conversation and updates the
+customer profile.
 
 The conversation may be in `active` (the first real sale never escalated) or
 `human_handoff`; both transition to `closed` here. `closed` ends the SALE, not
@@ -55,15 +58,22 @@ def evaluate_confirmation(state: str, extracted_context: dict) -> str:
     """Decide what an operator confirmation means for this conversation.
 
     Pure — no I/O. Returns one of:
-      - ALREADY_CONFIRMED: sale already closed by a prior confirmation —
-        idempotent no-op (safe for double-taps / Telegram retries).
+      - ALREADY_CONFIRMED: the payment is already in context — idempotent no-op
+        (safe for double-taps / Telegram retries).
       - ORDER_NOT_CONFIRMED: no user_confirmation in context — refuse.
       - CONFIRM_OK: proceed.
 
     Raises StateMachineError for states that cannot transition to closed
     (e.g. a conversation closed WITHOUT payment — not re-confirmable).
     """
-    if state == "closed" and extracted_context.get("payment_confirmation"):
+    # Idempotency is decided by the FACT (payment in context), never by the
+    # state. Tying it to `closed` is what let the duplicate sale of 2026-07-20
+    # through: the legacy LLM path recorded the sale but left the conversation
+    # in human_handoff, so this guard saw "not closed" and wrote a second sale.
+    # Since payment_confirmation is operator-only (agent_action.py:
+    # OPERATOR_ONLY_FIELDS), its presence can only mean a prior confirmation —
+    # whatever state the conversation ended up in.
+    if extracted_context.get("payment_confirmation"):
         return ALREADY_CONFIRMED
     if not extracted_context.get("user_confirmation"):
         return ORDER_NOT_CONFIRMED
@@ -84,6 +94,12 @@ async def confirm_payment(
          P2 shape) + lifecycle bump to 'customer'
       3. conversation → closed
       4. audit event `sale_closed` (actor_type='operator')
+
+    When the payment is already in context this is a pure no-op: it writes
+    NOTHING (not even the state) and reports the conversation as it stands.
+    Not closing a legacy human_handoff row is deliberate — idempotency here
+    means "never write twice", and the sale it would be closing was already
+    recorded by whoever wrote that payment_confirmation.
 
     Returns dict with: already_confirmed, new_state, side_effects.
     """
