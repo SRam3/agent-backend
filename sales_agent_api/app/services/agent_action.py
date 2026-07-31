@@ -5,14 +5,15 @@ After the LLM produces a response, n8n calls this service to:
      identical outbound, escalate to human_handoff and suppress it
      (approved=False, empty final_response_text) instead of persisting.
   1. Persist strategy-relevant extracted_data into conversation.extracted_context
-     (with DAG gates to enforce data order: user_confirmation needs
-     name+phone+address+city; payment_confirmation needs user_confirmation+phone+address)
+     (DAG gate: user_confirmation needs name+phone+address+city). A
+     payment_confirmation proposed by the LLM is DROPPED — confirming a payment
+     is the operator's authority alone (ADR-009, see OPERATOR_ONLY_FIELDS).
   2. Merge stable customer facts back into client_users.profile (persistent).
-  3. On payment_confirmation, bump profile.purchase_count + append purchase record.
-  4. Auto-escalate to human_handoff when all purchase data is collected.
-  5. Apply a proposed_transition if the LLM sends one (rare).
-  6. Persist the outbound message with AI metadata.
-  7. Write audit log entries.
+     Never a purchase record: an agent turn NEVER records a sale.
+  3. Auto-escalate to human_handoff when all purchase data is collected.
+  4. Apply a proposed_transition if the LLM sends one (rare).
+  5. Persist the outbound message with AI metadata.
+  6. Write audit log entries.
 """
 from __future__ import annotations
 
@@ -42,6 +43,15 @@ STRATEGY_FIELDS = {
     "shipping_address", "shipping_city",
     "user_confirmation", "payment_confirmation",
 }
+
+# Checkpoints the LLM may NEVER propose. payment_confirmation stays a DAG
+# checkpoint (the engine reads it from extracted_context) but its truth lives
+# outside the system — in a human looking at a receipt (ADR-009, alternative B
+# rejected: "ya pagué" is not proof). The ONLY writer is the operator endpoint
+# (confirm_payment.py). Anything the LLM proposes here is dropped in
+# compute_context_updates, so `payment_confirmation` present in
+# extracted_context means exactly one thing: an operator confirmed it.
+OPERATOR_ONLY_FIELDS = {"payment_confirmation"}
 
 # Non-DAG order details the customer volunteers (quantity, grind/roast taste).
 # Persisted to extracted_context in parallel to STRATEGY_FIELDS so the bot stops
@@ -80,9 +90,9 @@ class StaleContextError(AgentActionError):
 
 
 # DAG gate requirements — kept here so the pure selector below and the caller
-# share one source of truth.
+# share one source of truth. (There is no payment gate any more: payment is
+# never accepted from an agent turn at all — see OPERATOR_ONLY_FIELDS.)
 _USER_CONFIRMATION_REQUIRES = ("full_name", "phone", "shipping_address", "shipping_city")
-_PAYMENT_CONFIRMATION_REQUIRES = ("user_confirmation", "phone", "shipping_address")
 
 # Circuit breaker (P8): the outbound about to be sent fires the breaker when it
 # is the 3rd consecutive identical response — it equals BOTH of the two most
@@ -144,12 +154,22 @@ def compute_context_updates(
       - ``strategy_accepted``: the subset that are DAG strategy fields — drives
         profile merge + lifecycle bump in the caller. ORDER_FIELDS never appear
         here, so they can't trip the engine or the CRM lifecycle.
-      - ``rejections``: ``[{"field", "missing"}]`` for gated slots dropped
-        because their prerequisites weren't met yet.
+      - ``rejections``: ``[{"field", "missing"}]`` for slots dropped because
+        their prerequisites weren't met yet, or because the LLM has no
+        authority over them at all (OPERATOR_ONLY_FIELDS).
     """
     order_updates = {k: v for k, v in extracted_data.items() if k in ORDER_FIELDS and v}
     strategy_updates = {k: v for k, v in extracted_data.items() if k in STRATEGY_FIELDS and v}
     rejections: list[dict] = []
+
+    # Operator-only checkpoints are dropped UNCONDITIONALLY — no gate, no
+    # prerequisites to argue about (ADR-009). Done FIRST so the dropped value
+    # can never reach `merged` and count toward another slot's prerequisites.
+    # This supersedes the old payment gate (P3, PR #48): its scenario (payment
+    # riding on a same-turn user_confirmation) is now impossible a fortiori.
+    for field in sorted(OPERATOR_ONLY_FIELDS & strategy_updates.keys()):
+        del strategy_updates[field]
+        rejections.append({"field": field, "missing": ["operator_confirmation"]})
 
     # phone must be a plausible international number (E.164-lax, ADR-008):
     # 7-15 digits. Gated BEFORE merged is computed so garbage rejected this
@@ -166,19 +186,6 @@ def compute_context_updates(
         if missing:
             del strategy_updates["user_confirmation"]
             rejections.append({"field": "user_confirmation", "missing": missing})
-
-    # payment_confirmation requires user_confirmation + phone + shipping_address.
-    # Recompute merged AFTER the user_confirmation gate: a user_confirmation that
-    # was rejected THIS turn has just been dropped from strategy_updates, so it
-    # must not count toward payment's prerequisite. (A user_confirmation already
-    # persisted in current_context from a prior turn still counts — it survives
-    # in merged via the current_context spread.)
-    merged = {**current_context, **order_updates, **strategy_updates}
-    if "payment_confirmation" in strategy_updates:
-        missing = [f for f in _PAYMENT_CONFIRMATION_REQUIRES if not merged.get(f)]
-        if missing:
-            del strategy_updates["payment_confirmation"]
-            rejections.append({"field": "payment_confirmation", "missing": missing})
 
     accepted = {**order_updates, **strategy_updates}
     return accepted, strategy_updates, rejections
@@ -339,14 +346,12 @@ async def process_agent_action(
                 side_effects.append(
                     f"warning:premature_summary_missing_{'+'.join(rej['missing'])}"
                 )
-            # Likewise surface a premature payment_confirmation. This is the money
-            # step, and the human who inherits the handoff must SEE that a payment
-            # was attempted and rejected rather than have it vanish silently. Kept
-            # as a distinct string from the summary warning above.
+            # The LLM claimed a payment. It is dropped (ADR-009), but never
+            # silently: this is the money step, and the operator who decides it
+            # must SEE that the customer said "ya pagué" rather than have the
+            # claim vanish. Registering the sale remains theirs alone.
             elif rej["field"] == "payment_confirmation":
-                side_effects.append(
-                    f"warning:premature_payment_missing_{'+'.join(rej['missing'])}"
-                )
+                side_effects.append("warning:payment_claim_ignored")
             # An implausible phone (ADR-008): dropped, not persisted. The bot
             # keeps the conversation going (fail-safe) and ops sees the drop.
             elif rej["field"] == "phone":
@@ -370,33 +375,33 @@ async def process_agent_action(
             # Profile merge + CRM lifecycle bump are driven ONLY by DAG strategy
             # fields — order details (quantity/grind/roast) never move lifecycle.
             if strategy_accepted:
-                payment_just_confirmed = "payment_confirmation" in strategy_accepted
-                product_price = None
-                if payment_just_confirmed:
-                    product_price = await _fetch_product_price(
-                        session, client_id, new_context.get("product_id")
-                    )
-                # Merge stable customer facts into the persistent profile
+                # Facts about the person only. `payment_just_confirmed=False` is
+                # not a default here, it is the invariant: an agent turn never
+                # records a sale and never promotes to 'customer'. Both belong to
+                # the operator endpoint (confirm_payment.py — ADR-009).
                 await _merge_profile(
                     session,
                     client_user_id=conversation.client_user_id,
                     extracted_context=new_context,
-                    payment_just_confirmed=payment_just_confirmed,
+                    payment_just_confirmed=False,
                     conversation_id=conversation.id,
-                    product_price=product_price,
                 )
-
-                # CRM lifecycle bump: any accepted strategy slot moves a 'new'
-                # user to 'engaged'. A confirmed payment moves them to 'customer'.
-                target_stage = "customer" if payment_just_confirmed else "engaged"
                 await _bump_lifecycle_stage(
                     session,
                     client_user_id=conversation.client_user_id,
-                    target=target_stage,
+                    target="engaged",
                 )
 
     # --- 4. Auto-escalate when all purchase data is collected ----------------
-    if conversation.state != "human_handoff":
+    # Only from 'active': human_handoff has nowhere to escalate to, and 'closed'
+    # is TERMINAL. Guarding on 'active' (instead of "not human_handoff") closes
+    # a real race: confirm_payment does not bump strategy_version, so a turn
+    # already in flight when the operator closes the sale passes the staleness
+    # check, sees the operator's payment_confirmation in context (all_complete)
+    # and would resurrect a closed conversation into human_handoff — where
+    # ingest's 24h window would then trap the customer's next message
+    # (ingest.py: state != 'closed') in a conversation the bot must not answer.
+    if conversation.state == "active":
         client_row = await session.execute(
             select(Client).where(Client.id == client_id)
         )
@@ -530,9 +535,11 @@ async def _merge_profile(
 ) -> None:
     """Merge stable customer facts from extracted_context into client_users.profile.
 
-    On payment_confirmation, also increments purchase_count and appends a
-    purchase record (date, product_id, quantity, total, conversation_id) per
-    the migration-008 profile contract.
+    With ``payment_just_confirmed=True``, also increments purchase_count and
+    appends a purchase record (date, product_id, quantity, total,
+    conversation_id) per the migration-008 profile contract. Only
+    confirm_payment.py ever passes True — an agent turn always passes False
+    (ADR-009: the operator is the sole authority on a payment).
     """
     updates: dict = {}
     for ctx_key, profile_key in PROFILE_PERSIST_MAP.items():

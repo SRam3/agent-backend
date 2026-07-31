@@ -1,6 +1,6 @@
 # ADR-009 — Cierre del lazo de handoff humano (confirmación de pago, notificación y corte)
 
-- **Estatus**: Propuesto
+- **Estatus**: Aceptado — implementado (PR #54, e2e 2026-07-20). Ver "Notas as-built" al final.
 - **Fecha**: 2026-07-19
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: postmortem de la primera venta cerrada (`docs/postmortems/`), que reveló
@@ -148,6 +148,55 @@ por conversación nueva ya está soportada.
 
 Cada paso: un commit, su test donde aplique, verificado antes del siguiente. Los pasos 1-3
 son backend (tu terreno fuerte); 2 toca n8n; 4-5 son la pieza nueva de Telegram.
+
+## Notas as-built (2026-07-31) — la autoridad vieja también había que retirarla
+
+Implementado en PR #54 (endpoint + auth + Telegram + corte n8n) y probado e2e el
+2026-07-20. Ese e2e destapó lo que a este ADR le faltó: **movió la verdad del pago al
+operador pero nunca RETIRÓ la autoridad del camino viejo**. Quedaron dos autoridades vivas
+sobre el mismo hecho y ambas escribieron — la venta se registró DOS veces en el profile
+(conversación `9635…bce7`, `purchase_count: 2`, dos registros idénticos separados 67s:
+22:45:38 el del LLM, 22:46:45 el del operador). Era exactamente la **alternativa B que
+este ADR rechazó**, siguiendo viva en el código y en el prompt.
+
+La idempotencia del endpoint tampoco lo atrapó: su guard era `state == "closed" AND
+payment_confirmation`, y el camino viejo dejaba la conversación en `human_handoff`. Miraba
+el estado, no el hecho.
+
+Fix (rama `fix/venta-duplicada`, brief `docs/briefs/impl-brief-fix-venta-duplicada.md`):
+
+1. **`OPERATOR_ONLY_FIELDS`** en `agent_action.py`: un `payment_confirmation` propuesto por
+   el LLM se descarta SIEMPRE — sin gate, sin precondiciones que discutir — con side effect
+   visible `warning:payment_claim_ignored`. Un turno del agente ya no registra venta ni
+   promueve a `customer`. Esto reemplaza el gate P3 (PR #48), que quedó sin sentido: su
+   escenario ahora es imposible por una razón más fuerte.
+2. **Idempotencia por el hecho**: `evaluate_confirmation` decide por `payment_confirmation`
+   en contexto, sin mirar el estado.
+3. **Migración `011`**: saca la instrucción de emitir `payment_confirmation` del
+   `system_prompt_template`. El comportamiento de cobro no cambia (el bot sigue pidiendo el
+   comprobante y despidiéndose); solo deja de pedírsele la clave.
+4. **Guard `state == "active"`** en el auto-escalate: `confirm_payment` no sube
+   `strategy_version`, así que un turno en vuelo pasaba el chequeo de staleness, veía el
+   pago del operador (`all_complete`) y **resucitaba la conversación cerrada** a
+   `human_handoff` — donde la ventana de 24h del ingest atrapaba el siguiente mensaje del
+   cliente en una conversación que el bot no debe contestar.
+
+**Invariante que queda escrito en código**: `payment_confirmation` presente en
+`extracted_context` significa exactamente una cosa — un operador lo confirmó.
+
+**Consecuencia de diseño aceptada**: el turno del agente ya no escala por venta completa.
+Tras la confirmación del pedido la conversación sigue en `active` (el bot acompaña, el
+prompt ya lo hace despedirse) hasta que el operador pulsa el botón y cierra. El único
+escalamiento automático que queda es el circuit breaker. Se descartó escalar con el claim
+del LLM: un "ya pagué" falso o alucinado dejaría la conversación congelada sin vía de
+retorno (no existe endpoint `human_handoff → active`).
+
+**Pendiente al cerrar esta nota**: aplicar la `011` en prod; quitar `payment_confirmation`
+de las "Valid extracted_data keys" del nodo "Build LLM Prompt" en `cafe_arenillo_v2`
+(Fase 2, n8n vivo); limpiar la fila sucia del e2e. Detalle menor de la piel: en el caso
+legado (pago en contexto con la conversación aún en `human_handoff`) el endpoint responde
+`already_confirmed` sin cerrar, y el mensaje de Telegram dice "ya estaba confirmada y
+cerrada" — solo aplica a filas anteriores a este fix.
 
 ## Cuándo revisar
 
