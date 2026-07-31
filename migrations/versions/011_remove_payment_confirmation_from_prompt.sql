@@ -26,7 +26,8 @@
 --
 -- No schema change.
 --
--- Applied:
+-- Applied: 2026-07-31 (prod, manualmente vía psql, transacción única con
+--          verificación: 17340 → 17261 caracteres, 0 menciones restantes)
 
 UPDATE clients
    SET system_prompt_template = REPLACE(
