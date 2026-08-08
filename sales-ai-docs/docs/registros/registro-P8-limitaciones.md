@@ -3,7 +3,7 @@
 > Fecha: 2026-07-11. Contexto: P8 (`feat/p8-circuit-breaker`) implementó la parte
 > backend del freno a loops conversacionales: 3 outbounds idénticos consecutivos →
 > `human_handoff` + side_effect `circuit_breaker:loop_detected` + supresión de la
-> respuesta (`approved=False`, `final_response_text=""`). Ver `impl-brief-P8.md`.
+> respuesta (`approved=False`, `final_response_text=""`). Ver `docs/briefs/brief-impl-P8-circuit-breaker.md`.
 >
 > Estas dos limitaciones quedan registradas JUNTAS y fuera del scope de P8.
 > Ninguna invalida el valor de P8 (deja de quemar tokens y registra el evento),

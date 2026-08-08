@@ -6,7 +6,7 @@
 > nosotros.
 >
 > **Qué NO es esto**: un plan de implementación. NADA de este archivo se construye
-> ahora. Estamos en fase de **entender el estado actual** (ver `docs/audit-brief.md`).
+> ahora. Estamos en fase de **entender el estado actual** (ver `docs/briefs/brief-audit-2026-06-14-estado-y-plan.md`).
 > Este archivo existe para que, al auditar, se entienda el norte — y opcionalmente se
 > note qué tan lejos/cerca está el código actual de él, SIN cambiarlo.
 >

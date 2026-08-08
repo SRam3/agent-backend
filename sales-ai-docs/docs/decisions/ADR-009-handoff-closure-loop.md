@@ -163,7 +163,7 @@ La idempotencia del endpoint tampoco lo atrapó: su guard era `state == "closed"
 payment_confirmation`, y el camino viejo dejaba la conversación en `human_handoff`. Miraba
 el estado, no el hecho.
 
-Fix (rama `fix/venta-duplicada`, brief `docs/briefs/impl-brief-fix-venta-duplicada.md`):
+Fix (rama `fix/venta-duplicada`, brief `docs/briefs/brief-impl-P11-fix-venta-duplicada.md`):
 
 1. **`OPERATOR_ONLY_FIELDS`** en `agent_action.py`: un `payment_confirmation` propuesto por
    el LLM se descarta SIEMPRE — sin gate, sin precondiciones que discutir — con side effect
