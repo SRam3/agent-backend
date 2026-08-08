@@ -1,6 +1,7 @@
 # ADR-009 — Cierre del lazo de handoff humano (confirmación de pago, notificación y corte)
 
-- **Estatus**: Aceptado — implementado (PR #54, e2e 2026-07-20). Ver "Notas as-built" al final.
+- **Estatus**: Accepted
+- **Implementación**: PR #54, e2e 2026-07-20. Ver "Notas as-built" al final.
 - **Fecha**: 2026-07-19
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: postmortem de la primera venta cerrada (`docs/postmortems/`), que reveló

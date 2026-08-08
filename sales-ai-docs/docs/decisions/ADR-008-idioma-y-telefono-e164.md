@@ -1,6 +1,6 @@
 # ADR-008 — Soporte multiidioma e internacional (clientes extranjeros)
 
-- **Estatus**: Aceptado
+- **Estatus**: Accepted
 - **Fecha**: 2026-06-16 (revisado 2026-06-24)
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: hallazgos del stand 2026-06-16 (ver `docs/postmortems/postmortem-2026-06-16-stand-publico.md`)
