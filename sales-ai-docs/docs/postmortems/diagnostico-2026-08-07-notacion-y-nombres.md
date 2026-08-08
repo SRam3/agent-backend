@@ -3,7 +3,19 @@
 **Fecha**: 2026-08-07 · **Modo**: READ-ONLY estricto (inventario, cero renombres, cero ediciones)
 **Objetivo**: entender el estado real de la notación `P` y de los nombres de archivo en `docs/`
 antes de unificar, para que "P7" o el nombre de un archivo no tengan dos lecturas posibles.
-**Estatus de la propuesta (§4)**: **NO aplicada**. Requiere decisión explícita.
+**Estatus de la propuesta (§4)**: ✅ **APLICADA el 2026-08-08** (rama
+`docs/unificacion-notacion-p`). Los nombres de la columna "Propuesto" de §4.3 y §4.4 son
+hoy los vigentes; los de la columna "Actual" ya no existen. Las tablas se conservan tal cual
+porque son el mapeo viejo→nuevo que permite leer documentos y commits anteriores.
+
+**Divergencias respecto de lo propuesto aquí**, decididas al ejecutar:
+- El registro canónico de P quedó en `docs/ROADMAP.md`, **no** en `CLAUDE.md`: `CLAUDE.md`
+  está gitignored y la lista maestra no puede vivir fuera de git.
+- El ROADMAP (que este diagnóstico no alcanzó a ver, es posterior) usaba **notación F**
+  para 12 frentes. Se migró completa a P; ver §4.1 del ROADMAP.
+- P10 quedó como "detección de conversaciones no-humanas + estancamiento del DAG",
+  fusionando el detector de loop de texto variable con el frente F10 del ROADMAP, que ya
+  lo contenía como una de sus señales.
 
 **Convención de evidencia**: `archivo:línea` = leído del repo. Rutas relativas a `agent-backend/`.
 

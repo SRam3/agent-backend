@@ -28,7 +28,7 @@ Mientras tanto: el breaker suprime la respuesta también cuando la conversación
 YA está en `human_handoff`, así que aunque n8n siga llamando `/agent/action`,
 el backend no persiste ni aprueba más outbounds idénticos.
 
-## 2. Loop de texto variable NO cubierto (candidato P9)
+## 2. Loop de texto variable NO cubierto (hoy P10)
 
 - El trigger de P8 es comparación **EXACTA** de texto (decisión confirmada del
   brief: cero falsos positivos por respuestas legítimamente parecidas, simple
@@ -39,7 +39,11 @@ el backend no persiste ni aprueba más outbounds idénticos.
   sin progreso) con una decisión de producto pendiente (¿qué N?) y riesgo real
   de falsos positivos: conversaciones legítimas pasan turnos sin progreso
   (preguntas de producto, small talk, "déjame pensarlo").
-- Registrado como **candidato P9**. No mezclar con P8.
+- Registrado como **P10** (detección de conversaciones no-humanas + estancamiento del
+  DAG, ver `docs/ROADMAP.md`). No mezclar con P8.
+  > **Corrección de notación (2026-08-08)**: este punto decía "candidato P9", pero P9 ya
+  > estaba tomado por los microfixes n8n desde la auditoría de 2026-06-14. El mismo frente
+  > también se trackeaba como el remanente de `deuda #10`. Unificado en **P10**.
 
 ---
 
