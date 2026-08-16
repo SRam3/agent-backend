@@ -1,5 +1,13 @@
 # Brief de implementación — P3: cerrar el gate permeable de payment_confirmation
 
+> ⚠️ **Estado: Superseded by ADR-009** (nota añadida 2026-08-08, el brief no se modifica).
+> P3 se implementó y mergeó (PR #48), pero ADR-009 lo dejó sin escenario: hoy el
+> `payment_confirmation` propuesto por el LLM se descarta **siempre**
+> (`OPERATOR_ONLY_FIELDS`), así que un pago no puede "colarse" por un gate permeable —
+> no llega al gate. Los tests de P3 se conservan como regresión. Ver
+> `docs/decisions/ADR-009-handoff-closure-loop.md` y
+> `docs/briefs/brief-impl-P11-fix-venta-duplicada.md`.
+
 > **Encuadre**: este fix garantiza la **integridad del estado que el humano hereda en
 > el handoff**. El handoff humano (cliente manda comprobante → humano valida vía
 > Telegram) hereda los datos que el LLM recolectó. Si el gate de pago es permeable, el

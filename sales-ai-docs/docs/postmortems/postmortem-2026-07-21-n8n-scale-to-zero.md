@@ -69,7 +69,7 @@ webhooks, ejecuciones y schedule triggers. Reversible.
 
 ## ¿Bug nuevo o regresión? — Ninguna: componente nunca cubierto
 
-El postmortem `stand-2026-06-16.md` describió y arregló este mismo tipo de fallo, pero:
+El postmortem `postmortem-2026-06-16-stand-publico.md` describió y arregló este mismo tipo de fallo, pero:
 
 | | Stand 2026-06-16 | Este evento 2026-07-21 |
 |---|---|---|

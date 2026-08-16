@@ -1,9 +1,9 @@
 # ADR-008 — Soporte multiidioma e internacional (clientes extranjeros)
 
-- **Estatus**: Aceptado
+- **Estatus**: Accepted
 - **Fecha**: 2026-06-16 (revisado 2026-06-24)
 - **Decididores**: Sebastian + cofounder/principal architect
-- **Origen**: hallazgos del stand 2026-06-16 (ver `docs/postmortems/stand-2026-06-16.md`)
+- **Origen**: hallazgos del stand 2026-06-16 (ver `docs/postmortems/postmortem-2026-06-16-stand-publico.md`)
 
 > **Revisión 2026-06-24**: la decisión de idioma cambió de "regla en el
 > `system_prompt_template`" a **detección determinista en el backend** (antes

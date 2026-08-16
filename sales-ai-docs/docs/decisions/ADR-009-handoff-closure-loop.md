@@ -1,6 +1,7 @@
 # ADR-009 — Cierre del lazo de handoff humano (confirmación de pago, notificación y corte)
 
-- **Estatus**: Aceptado — implementado (PR #54, e2e 2026-07-20). Ver "Notas as-built" al final.
+- **Estatus**: Accepted
+- **Implementación**: PR #54, e2e 2026-07-20. Ver "Notas as-built" al final.
 - **Fecha**: 2026-07-19
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: postmortem de la primera venta cerrada (`docs/postmortems/`), que reveló
@@ -163,7 +164,7 @@ La idempotencia del endpoint tampoco lo atrapó: su guard era `state == "closed"
 payment_confirmation`, y el camino viejo dejaba la conversación en `human_handoff`. Miraba
 el estado, no el hecho.
 
-Fix (rama `fix/venta-duplicada`, brief `docs/briefs/impl-brief-fix-venta-duplicada.md`):
+Fix (rama `fix/venta-duplicada`, brief `docs/briefs/brief-impl-P11-fix-venta-duplicada.md`):
 
 1. **`OPERATOR_ONLY_FIELDS`** en `agent_action.py`: un `payment_confirmation` propuesto por
    el LLM se descarta SIEMPRE — sin gate, sin precondiciones que discutir — con side effect

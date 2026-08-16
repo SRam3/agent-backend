@@ -1,7 +1,7 @@
 # Auditoría v2 — estado actual + revisión viva + plan de trabajo
 
 **Fecha**: 2026-06-14
-**Brief**: `docs/audit-brief.md`
+**Brief**: `docs/briefs/brief-audit-2026-06-14-estado-y-plan.md`
 **Modo de ejecución**: READ-ONLY estricto. Sesión Postgres con `default_transaction_read_only = on` (verificado con `SHOW` como primer comando); contra n8n solo `GET /api/v1/workflows[/{id}]` y `GET /api/v1/executions`; contra Azure solo lecturas (`az keyvault secret show`, `az containerapp show/logs`). Cero escrituras, cero archivos del repo modificados durante la auditoría, cero fixes ejecutados.
 
 **Convención de evidencia**: `archivo:línea` = inferido del repo; `[DB]` = confirmado con SELECT contra la Postgres viva; `[n8n]` = confirmado leyendo la definición viva del workflow. PII enmascarada.

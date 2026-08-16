@@ -1,6 +1,6 @@
 # Postmortem de un éxito — Primera venta cerrada
 
-**Fecha del análisis**: 2026-07-19 · **Venta**: 2026-07-15 · **Brief**: `docs/briefs/analisis-primera-venta-brief.md`
+**Fecha del análisis**: 2026-07-19 · **Venta**: 2026-07-15 · **Brief**: `docs/briefs/brief-analisis-2026-07-15-primera-venta.md`
 
 **Convención de evidencia**: toda afirmación con timestamp UTC y/o message_id corto está confirmada con SELECT contra la Postgres viva (read-only). PII enmascarada en todo el documento. `archivo:línea` = inferido del repo.
 

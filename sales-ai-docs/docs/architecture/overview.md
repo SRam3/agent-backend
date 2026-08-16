@@ -45,7 +45,7 @@ flowchart LR
 
 **Cómo leerlo**: el cliente nunca habla directo con nuestro sistema — Chakra HQ es el intermediario con WhatsApp. **n8n** es el director de orquesta (no piensa, coordina). El **backend** es el cerebro con las reglas. El **operador humano** entra por Telegram cuando hay que confirmar un pago o rescatar una conversación.
 
-> **Nota de resiliencia**: n8n y el backend son dos servicios **separados** en Azure Container Apps, y **ambos** deben estar siempre encendidos. Si cualquiera de los dos se apaga por inactividad, un mensaje que llega mientras arranca en frío se pierde (ver `postmortems/n8n-scale-to-zero-2026-07-21.md`).
+> **Nota de resiliencia**: n8n y el backend son dos servicios **separados** en Azure Container Apps, y **ambos** deben estar siempre encendidos. Si cualquiera de los dos se apaga por inactividad, un mensaje que llega mientras arranca en frío se pierde (ver `postmortems/postmortem-2026-07-21-n8n-scale-to-zero.md`).
 
 ---
 

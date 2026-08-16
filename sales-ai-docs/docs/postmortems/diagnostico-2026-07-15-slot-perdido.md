@@ -1,6 +1,6 @@
 # Diagnóstico — Slot perdido en la primera venta (Hipótesis B confirmada)
 
-**Fecha del diagnóstico**: 2026-07-19 · **Turno analizado**: 2026-07-15 19:58 UTC (conversación `31e4…09c8`) · **Origen**: `hallazgos-primera-venta.md` §2 · **Fix derivado**: `docs/briefs/impl-brief-order-fields-directive.md`
+**Fecha del diagnóstico**: 2026-07-19 · **Turno analizado**: 2026-07-15 19:58 UTC (conversación `31e4…09c8`) · **Origen**: `analisis-2026-07-15-primera-venta.md` §2 · **Fix derivado**: `docs/briefs/brief-impl-P12-order-fields-directive.md`
 
 **Convención de evidencia**: timestamps UTC y message_ids = confirmado con SELECT read-only contra la Postgres viva; `[n8n]` = leído del workflow vivo `cafe_arenillo_v2`; `archivo:línea` = repo. PII enmascarada.
 
@@ -54,4 +54,4 @@ Commit `0a0c2de` ("P2: persist quantity/grind/roast…") es del **2026-06-14**, 
 
 ## Dónde vive el fix
 
-En la orientación del LLM — el directive (`goal_strategy.py`), la parte que el modelo sí obedece — no en el backend ni en reconciliación de catálogo. Implementación: `docs/briefs/impl-brief-order-fields-directive.md`. Limitación conocida más amplia (el LLM solo captura lo que pregunta) registrada en la nota final de ese brief; no se ataca aquí.
+En la orientación del LLM — el directive (`goal_strategy.py`), la parte que el modelo sí obedece — no en el backend ni en reconciliación de catálogo. Implementación: `docs/briefs/brief-impl-P12-order-fields-directive.md`. Limitación conocida más amplia (el LLM solo captura lo que pregunta) registrada en la nota final de ese brief; no se ataca aquí.

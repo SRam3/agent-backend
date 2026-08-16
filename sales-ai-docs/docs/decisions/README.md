@@ -4,7 +4,7 @@ Registro append-only de decisiones arquitectónicas del proyecto. Cada ADR docum
 
 ## Reglas
 
-1. **Append-only**: una vez escrito y mergeado, un ADR no se modifica. Si la decisión cambia, se escribe un ADR nuevo que "supersede" al anterior.
+1. **Append-only**: un ADR es inmutable una vez `Accepted`, **salvo un bloque final «Notas as-built»** que puede añadirse para registrar lo aprendido durante la implementación (qué se desvió del plan, qué se descubrió al construirlo). El cuerpo de la decisión —contexto, decisión, alternativas, consecuencias— no se reescribe. Si la decisión cambia, se escribe un ADR nuevo que "supersede" al anterior.
 2. **Numeración secuencial**: `ADR-NNN-titulo-corto.md`, sin saltos.
 3. **Naming**: kebab-case, descriptivo pero corto (≤ 6 palabras).
 4. **Estatus posibles**: `Accepted` (vigente), `Superseded by ADR-NNN` (reemplazado), `Deprecated` (obsoleto sin reemplazo).
@@ -80,3 +80,9 @@ Ej: "Cuando tengamos 3+ clientes con catálogo > 50 SKUs."
 | 005 | Perfil persistente en client_users | Accepted | 2026-04-21 |
 | 006 | VARCHAR + CHECK sobre ENUMs nativos | Accepted | 2026-04-03 |
 | 007 | Colapso de state machine de 7 a 3 estados | Accepted | 2026-04-19 |
+| 008 | Soporte multiidioma e internacional | Accepted | 2026-06-16 |
+| 009 | Cierre del lazo de handoff humano | Accepted | 2026-07-19 |
+
+> **010 está reservado**, no escrito: el frente P10 (detección de conversaciones no-humanas)
+> tiene el diseño hecho en `docs/ROADMAP.md` y lo referencia como "ADR-010". Convertirlo en
+> decisión escrita es prerrequisito para implementar P10.
