@@ -40,7 +40,13 @@
 -- Lo único que podría querer retirarlo es la fusión phone↔BSUID, que está fuera
 -- de alcance a propósito y va en su propio ADR (identidad primaria por BSUID).
 --
--- Applied:
+-- Applied: 2026-08-17 (prod, manualmente vía psql, transacción única con
+--          verificación: bsuid VARCHAR(140) nullable creado, phone_number pasó
+--          a nullable, índice uq_client_users_client_bsuid creado sobre
+--          (client_id, bsuid), y uq_client_user_phone INTACTO — confirmando que
+--          el upsert del código entonces desplegado seguía resolviendo por
+--          nombre de constraint. 0 de 33 filas con bsuid, como se esperaba:
+--          todos los client_users existentes son pre-P14.)
 
 -- ---------------------------------------------------------------------------
 -- 1. Columna bsuid
