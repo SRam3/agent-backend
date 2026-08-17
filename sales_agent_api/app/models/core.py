@@ -71,7 +71,14 @@ class ClientUser(Base):
     client_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
     )
-    phone_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Identity. The BSUID (Business-Scoped User ID, e.g. "CO.1034312865991667")
+    # is the primary identity: WhatsApp's number-privacy rollout means a customer
+    # may reach us with NO phone number at all. It is scoped per WABA, so it is
+    # unique per tenant — never globally (index uq_client_users_client_bsuid,
+    # migration 012). phone_number is an optional contact attribute; it is NULL
+    # for privacy-enabled customers and populated for everyone seen before P14.
+    bsuid: Mapped[Optional[str]] = mapped_column(String(140))
+    phone_number: Mapped[Optional[str]] = mapped_column(String(20))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
     # Persistent customer profile across conversations. Shape documented in
     # migration 007: {first_name, full_name, email, city, shipping_address,

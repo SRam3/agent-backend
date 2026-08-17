@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
@@ -24,12 +24,27 @@ router = APIRouter()
 # Request / Response schemas
 # ---------------------------------------------------------------------------
 class IngestMessageRequest(BaseModel):
+    """Inbound message from n8n.
+
+    Both identity fields are optional *individually* but at least one must be
+    present. A customer with WhatsApp number-privacy enabled arrives with only
+    a `bsuid` and no phone at all; conversely n8n sends only `phone_number`
+    until the workflow is updated (P14 Fase 3), so both shapes must be accepted.
+    """
+
     chakra_message_id: str
-    phone_number: str
+    bsuid: Optional[str] = None
+    phone_number: Optional[str] = None
     content: str
     display_name: Optional[str] = None
     message_type: str = "text"
     timestamp: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def _require_some_identity(self) -> "IngestMessageRequest":
+        if not self.bsuid and not self.phone_number:
+            raise ValueError("at least one of 'bsuid' or 'phone_number' is required")
+        return self
 
 
 class IngestMessageResponse(BaseModel):
@@ -69,6 +84,7 @@ async def ingest_message_endpoint(
             session=session,
             client_id=client_id,
             chakra_message_id=body.chakra_message_id,
+            bsuid=body.bsuid,
             phone_number=body.phone_number,
             content=body.content,
             display_name=body.display_name,
