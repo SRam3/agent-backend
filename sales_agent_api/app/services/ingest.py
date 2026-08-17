@@ -77,8 +77,9 @@ async def ingest_message(
     session: AsyncSession,
     client_id: uuid.UUID,
     chakra_message_id: str,
-    phone_number: str,
     content: str,
+    bsuid: Optional[str] = None,
+    phone_number: Optional[str] = None,
     display_name: Optional[str] = None,
     message_type: str = "text",
     timestamp: Optional[datetime] = None,
@@ -106,32 +107,22 @@ async def ingest_message(
         logger.info("Duplicate message rejected: chakra_message_id=%s", chakra_message_id)
         raise DuplicateMessageError(f"Message {chakra_message_id} already processed")
 
-    # --- 3. Upsert client_user -----------------------------------------------
+    # --- 3. Resolve client_user (BSUID-first) --------------------------------
     now = datetime.now(timezone.utc)
-    upsert_stmt = (
-        pg_insert(ClientUser)
-        .values(
-            client_id=client_id,
-            phone_number=phone_number,
-            display_name=display_name,
-            first_contact_at=now,
-            last_contact_at=now,
-        )
-        .on_conflict_do_update(
-            constraint="uq_client_user_phone",
-            set_={
-                "display_name": display_name,
-                "last_contact_at": now,
-            },
-        )
-        .returning(ClientUser)
+    client_user = await _resolve_client_user(
+        session=session,
+        client_id=client_id,
+        bsuid=bsuid,
+        phone_number=phone_number,
+        display_name=display_name,
+        now=now,
     )
-    result = await session.execute(upsert_stmt)
-    client_user: ClientUser = result.scalar_one()
 
     # --- 4. Block check -------------------------------------------------------
     if client_user.is_blocked:
-        raise UserBlockedError(f"User {phone_number} is blocked")
+        raise UserBlockedError(
+            f"User {_mask_identity(bsuid, phone_number)} is blocked"
+        )
 
     # --- 5. Find or create conversation (24h window) -------------------------
     window_start = now - timedelta(hours=24)
@@ -288,7 +279,7 @@ async def ingest_message(
             actor_type="system",
             new_value={
                 "chakra_message_id": chakra_message_id,
-                "phone_number": _mask_phone(phone_number),
+                "identity": _mask_identity(bsuid, phone_number),
                 "conversation_id": str(conversation.id),
             },
         )
@@ -372,6 +363,7 @@ async def ingest_message(
         "user_context": {
             "display_name": client_user.display_name,
             "phone_number": _mask_phone(phone_number),
+            "bsuid": _mask_phone(bsuid) if bsuid else None,
             "profile": client_user.profile or {},
             "is_blocked": client_user.is_blocked,
         },
@@ -432,8 +424,114 @@ async def _find_last_conversation(
     return row.scalar_one_or_none()
 
 
-def _mask_phone(phone: str) -> str:
+async def _resolve_client_user(
+    session: AsyncSession,
+    client_id: uuid.UUID,
+    bsuid: Optional[str],
+    phone_number: Optional[str],
+    display_name: Optional[str],
+    now: datetime,
+) -> ClientUser:
+    """Find or create the client_user for an inbound message, BSUID-first.
+
+    WhatsApp's number-privacy rollout means the phone number is no longer a
+    reliable identity: a customer may arrive with only a BSUID. Resolution
+    order:
+
+      1. By (client_id, bsuid) — the real identity when we have it.
+      2. By (client_id, phone_number) — a customer we met BEFORE P14 is stored
+         phone-keyed with bsuid NULL. Reusing that row is what keeps them from
+         being duplicated and losing their profile/history. We deliberately do
+         NOT write the bsuid back onto that row: proving "these two identities
+         are the same person" and merging them is the identity redesign, which
+         has its own ADR. Here we only avoid making the problem worse.
+      3. Insert. Uses ON CONFLICT so that a concurrent ingest for the same new
+         customer converges instead of raising — the advisory lock is only
+         taken later (step 6), so this step is genuinely racy.
+
+    When no bsuid is supplied at all (n8n before P14 Fase 3) this falls through
+    to the original phone-keyed upsert, unchanged.
+    """
+    set_on_match = {"display_name": display_name, "last_contact_at": now}
+
+    if bsuid:
+        found = await session.execute(
+            select(ClientUser).where(
+                ClientUser.client_id == client_id, ClientUser.bsuid == bsuid
+            )
+        )
+        existing: Optional[ClientUser] = found.scalar_one_or_none()
+
+        if existing is None and phone_number:
+            found = await session.execute(
+                select(ClientUser).where(
+                    ClientUser.client_id == client_id,
+                    ClientUser.phone_number == phone_number,
+                )
+            )
+            existing = found.scalar_one_or_none()
+
+        if existing is not None:
+            if display_name:
+                existing.display_name = display_name
+            existing.last_contact_at = now
+            return existing
+
+        # New customer. Safe against uq_client_user_phone: we only get here when
+        # the phone lookup above found nothing (or there is no phone at all, and
+        # NULLs do not collide in a unique index).
+        insert_stmt = (
+            pg_insert(ClientUser)
+            .values(
+                client_id=client_id,
+                bsuid=bsuid,
+                phone_number=phone_number,
+                display_name=display_name,
+                first_contact_at=now,
+                last_contact_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=["client_id", "bsuid"],
+                set_=set_on_match,
+            )
+            .returning(ClientUser)
+        )
+        return (await session.execute(insert_stmt)).scalar_one()
+
+    # No BSUID: the pre-P14 path, byte-for-byte as it was.
+    upsert_stmt = (
+        pg_insert(ClientUser)
+        .values(
+            client_id=client_id,
+            phone_number=phone_number,
+            display_name=display_name,
+            first_contact_at=now,
+            last_contact_at=now,
+        )
+        .on_conflict_do_update(
+            constraint="uq_client_user_phone",
+            set_=set_on_match,
+        )
+        .returning(ClientUser)
+    )
+    return (await session.execute(upsert_stmt)).scalar_one()
+
+
+def _mask_phone(phone: Optional[str]) -> str:
     """Mask PII: keep only last 4 digits."""
+    if not phone:
+        return "****"
     if len(phone) <= 4:
         return "****"
     return "*" * (len(phone) - 4) + phone[-4:]
+
+
+def _mask_identity(bsuid: Optional[str], phone_number: Optional[str]) -> str:
+    """Mask whichever identity we have, preferring the BSUID.
+
+    Never returns a bare None: a privacy-enabled customer has no phone at all,
+    and log lines saying "User None" help nobody.
+    """
+    if bsuid:
+        return _mask_phone(bsuid)
+    return _mask_phone(phone_number)
