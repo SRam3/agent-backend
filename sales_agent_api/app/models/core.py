@@ -71,7 +71,7 @@ class ClientUser(Base):
     client_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
     )
-    # Identity. The BSUID (Business-Scoped User ID, e.g. "CO.1034312865991667")
+    # Identity. The BSUID (Business-Scoped User ID, e.g. "CO.XXXXXXXXXXXXXXXX")
     # is the primary identity: WhatsApp's number-privacy rollout means a customer
     # may reach us with NO phone number at all. It is scoped per WABA, so it is
     # unique per tenant — never globally (index uq_client_users_client_bsuid,
