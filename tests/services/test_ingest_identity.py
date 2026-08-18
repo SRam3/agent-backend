@@ -27,8 +27,8 @@ from app.services.ingest import _mask_identity, _mask_phone, _resolve_client_use
 
 CLIENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 NOW = datetime(2026, 8, 4, 19, 51, 14, tzinfo=timezone.utc)
-BSUID = "CO.1034312865991667"
-PHONE = "573107148477"
+BSUID = "CO.0000000000001234"
+PHONE = "570000005678"
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ def test_mask_phone_tolerates_none():
 
 
 def test_mask_identity_prefers_bsuid_and_never_says_none():
-    assert _mask_identity(BSUID, None).endswith("1667")
-    assert _mask_identity(None, PHONE).endswith("8477")
+    assert _mask_identity(BSUID, None).endswith("1234")
+    assert _mask_identity(None, PHONE).endswith("5678")
     assert _mask_identity(None, None) == "****"
     assert "None" not in _mask_identity(None, None)

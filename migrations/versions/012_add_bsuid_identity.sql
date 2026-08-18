@@ -3,7 +3,7 @@
 -- Contexto (P14 — mensaje perdido del 2026-08-04, ejecución n8n 9459):
 -- WhatsApp desplegó privacidad de número. Cuando un cliente la activa, Meta deja
 -- de mandar `from` y `wa_id` en el webhook y lo identifica SOLO con su BSUID
--- (Business-Scoped User ID, formato `CO.1034312865991667`). Una clienta real
+-- (Business-Scoped User ID, formato `CO.XXXXXXXXXXXXXXXX`). Una clienta real
 -- escribió "Hola" y el sistema la descartó en silencio: el teléfono era la única
 -- identidad que sabía leer, y no venía. Diagnóstico completo: el payload es
 -- pass-through verbatim de Meta y `from_user_id`/`user_id` YA llegan en todos los
@@ -56,7 +56,7 @@ ALTER TABLE client_users
 
 COMMENT ON COLUMN client_users.bsuid IS
   'Business-Scoped User ID de WhatsApp: country code + "." + identificador '
-  '(ej. CO.1034312865991667). Identidad del cliente ante ESTE tenant — Meta emite '
+  '(ej. CO.XXXXXXXXXXXXXXXX). Identidad del cliente ante ESTE tenant — Meta emite '
   'un BSUID distinto por WABA, por eso la unicidad es (client_id, bsuid) y nunca '
   'global. NULL en las filas anteriores a P14 y en clientes vistos solo por '
   'teléfono. VARCHAR(140) da margen sobre el máximo de Meta (128 + prefijo); los '

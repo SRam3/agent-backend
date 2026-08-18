@@ -26,7 +26,7 @@
 **Problema**: WhatsApp desplegó privacidad de número (BSUID). Para clientes con privacidad
 activada, Meta omite `from`/`wa_id` y manda solo el BSUID (`CO.1034…`). El sistema perdía
 estos mensajes en silencio. **Evidencia**: clienta real "Juan Perez"
-(`CO.1034312865991667`) perdida el 2026-08-01, drop silencioso (Stop "success" 15ms).
+(`CO.XXXXXXXXXXXXXXXX`) perdida el 2026-08-01, drop silencioso (Stop "success" 15ms).
 
 **Confirmado contra el payload REAL (diagnóstico exec 9459 vs 9461)**:
 1. Los campos BSUID YA llegan — formato pass-through verbatim de Meta. `user_id` y
