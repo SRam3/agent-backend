@@ -14,6 +14,7 @@ from app.services.ingest import (
     ClientNotFoundError,
     DuplicateMessageError,
     UserBlockedError,
+    build_suppressed_response,
     ingest_message,
 )
 
@@ -49,6 +50,9 @@ class IngestMessageRequest(BaseModel):
 
 class IngestMessageResponse(BaseModel):
     should_respond: bool
+    #: Why the turn was suppressed. Empty when should_respond is True.
+    #: One of "", "debounce", "duplicate", "unreadable_content".
+    reason: str = ""
     conversation_id: uuid.UUID
     conversation_state: str
     strategy_directive: str
@@ -95,19 +99,11 @@ async def ingest_message_endpoint(
         return IngestMessageResponse(**result)
 
     except DuplicateMessageError:
-        # Idempotent — return a minimal response without side effects
+        # Idempotent — return a minimal response without side effects.
+        # Same shape as every other suppressed turn; there is no conversation
+        # to report here, so the helper supplies the dummy id.
         await session.rollback()
-        return IngestMessageResponse(
-            should_respond=False,
-            conversation_id=uuid.uuid4(),  # dummy — caller should check should_respond
-            conversation_state="active",
-            strategy_directive="",
-            strategy_meta={},
-            strategy_version=0,
-            client_config={},
-            user_context={},
-            recent_messages=[],
-        )
+        return IngestMessageResponse(**build_suppressed_response("duplicate"))
 
     except ClientNotFoundError as exc:
         await session.rollback()

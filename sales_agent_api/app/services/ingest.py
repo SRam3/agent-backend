@@ -71,6 +71,44 @@ class UserBlockedError(IngestError):
 
 
 # ---------------------------------------------------------------------------
+# Suppressed-turn response
+# ---------------------------------------------------------------------------
+def build_suppressed_response(
+    reason: str,
+    conversation: Optional[Conversation] = None,
+) -> dict:
+    """A complete, valid ingest response that tells n8n *not* to answer.
+
+    Every field of IngestMessageResponse is present. That is the whole point:
+    the debounce path used to return a two-key dict, which the endpoint then
+    fed to IngestMessageResponse(**result) and blew up with 500 on every
+    single coalescence. The path never once returned a valid response.
+
+    `conversation_state` matters as much as `should_respond`: the n8n node
+    "IF Should Respond" tests BOTH, so a missing state is not inert.
+
+    When a conversation is available (debounce, unreadable content) the real
+    identifiers go out instead of placeholders; the duplicate path has no
+    conversation to report and keeps the historical dummy uuid.
+    """
+    return {
+        "should_respond": False,
+        "reason": reason,
+        "conversation_id": conversation.id if conversation is not None else uuid.uuid4(),
+        "conversation_state": conversation.state if conversation is not None else "active",
+        "strategy_directive": "",
+        "strategy_meta": {},
+        "strategy_version": conversation.strategy_version if conversation is not None else 0,
+        "client_config": {},
+        "user_context": {},
+        "product_catalog": [],
+        "business_context": "",
+        "conversation_summary": "",
+        "recent_messages": [],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main service function
 # ---------------------------------------------------------------------------
 async def ingest_message(
@@ -225,7 +263,7 @@ async def ingest_message(
             "Debounce: newer message exists, skipping response for %s",
             chakra_message_id,
         )
-        return {"should_respond": False, "reason": "debounce"}
+        return build_suppressed_response("debounce", conversation)
 
     # Re-acquire advisory lock for the rest of the processing
     lock_key2 = int(hashlib.sha1(str(conversation.id).encode()).hexdigest(), 16) % (2**63)
