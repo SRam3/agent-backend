@@ -34,7 +34,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../sales_agent_ap
 from app.api.v1.ingest import IngestMessageResponse
 from app.models.core import Client, ClientUser, Conversation
 from app.services import ingest as ingest_mod
-from app.services.ingest import build_suppressed_response, ingest_message
+from app.services.ingest import (
+    build_suppressed_response,
+    ingest_message,
+    is_unreadable,
+)
 
 CLIENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = uuid.UUID("59cd973e-a94d-4a2f-a228-9ce5d74fe2ac")
@@ -245,3 +249,134 @@ def test_reason_is_empty_on_a_normal_answered_turn():
         ).reason
         == ""
     )
+
+
+# ===========================================================================
+# COMMIT 2 — the unreadable-content guard (mitad barata de P16)
+# ===========================================================================
+def _results_up_to_guard():
+    """Canned results for every session.execute() before the guard fires.
+
+    Same as the debounce list minus the lookahead: the guard returns before
+    the 5-second wait, so that query never happens. FakeSession raises if the
+    code asks for more, which is how we prove the wait was skipped.
+    """
+    return [_client(), None, _client_user(), _conversation(), None, None]
+
+
+@pytest.mark.parametrize(
+    "message_type,content,label",
+    [
+        ("edit", "", "el evento edit del 2026-08-19"),
+        ("audio", "", "el audio de las 22:15 UTC"),
+        ("unsupported", "", "unsupported"),
+        ("image", "", "imagen sin caption"),
+        ("text", "   ", "solo espacios"),
+        ("text", "\n\t ", "solo whitespace"),
+    ],
+)
+def test_unreadable_message_takes_no_turn(message_type, content, label):
+    session = FakeSession(_results_up_to_guard())
+
+    result = _run(session, content=content, message_type=message_type)
+
+    assert result["should_respond"] is False, label
+    assert result["reason"] == "unreadable_content", label
+    IngestMessageResponse(**result)  # must be a valid response, not a stub
+
+
+def test_unreadable_message_is_still_persisted():
+    """Persist, THEN suppress. The next turn has to find it in the history."""
+    session = FakeSession(_results_up_to_guard())
+
+    _run(session, content="", message_type="audio")
+
+    assert len(session.added_messages) == 1
+    message = session.added_messages[0]
+    assert message.content == ""
+    assert message.message_type == "audio"  # the real type, not normalised away
+    assert message.direction == "inbound"
+    assert message.chakra_message_id == "wamid.TEST"
+    assert session.commits >= 1, "the message must be committed before suppressing"
+
+
+def test_unreadable_message_never_computes_a_strategy(monkeypatch):
+    """No directive means no turn, which means n8n never calls the LLM."""
+    calls = []
+    monkeypatch.setattr(
+        ingest_mod._engine,
+        "compute",
+        lambda *a, **k: calls.append(a) or pytest.fail("strategy was computed"),
+    )
+    session = FakeSession(_results_up_to_guard())
+
+    _run(session, content="", message_type="unsupported")
+
+    assert calls == []
+
+
+def test_unreadable_message_skips_the_five_second_wait():
+    """The guard sits before the debounce, so an unreadable message does not
+    hold a connection open for 5s. FakeSession runs out of canned results if
+    the lookahead query is attempted."""
+    session = FakeSession(_results_up_to_guard())
+
+    _run(session, content="", message_type="image")
+
+    # 6 executes: client, idempotency, client_user, conversation, lock, counters.
+    assert len(session.statements) == 6
+
+
+def test_readable_text_is_untouched_by_the_guard():
+    """The regression that matters: a normal message still takes its turn.
+
+    Driven only as far as the debounce lookahead — past it the function needs
+    a real catalog and product rows, which is another test's job. Reaching the
+    lookahead at all proves the guard let the message through.
+    """
+    session = FakeSession(_results_up_to_debounce_check(uuid.uuid4()))
+
+    result = _run(session, content="Quiero 2 libras de café en grano")
+
+    assert result["reason"] == "debounce"  # not "unreadable_content"
+    assert len(session.statements) == 7  # the lookahead DID run
+
+
+def test_debounce_ignores_newer_messages_that_cannot_take_a_turn():
+    """Text, then a voice note. Without the filter the text defers to the
+    audio and the audio suppresses itself, so a real question goes unanswered.
+
+    The lookahead returns nothing (the audio is filtered out), so the turn is
+    NOT suppressed and ingest carries on into the strategy computation — which
+    this stub is not provisioned for. Running out of canned results *is* the
+    assertion: an early return would have ended the call at statement 7.
+    """
+    session = FakeSession(_results_up_to_debounce_check(None))  # no readable newer
+
+    with pytest.raises(AssertionError, match="ran past the canned results"):
+        _run(session, content="¿Me lo pueden enviar hoy?")
+
+    assert len(session.statements) == 8, "should have proceeded past the lookahead"
+
+
+def test_debounce_lookahead_filters_on_content_in_sql():
+    """Pin the filter in the emitted SQL, so removing it fails here."""
+    session = FakeSession(_results_up_to_debounce_check(uuid.uuid4()))
+
+    _run(session, content="hola")
+
+    lookahead = str(session.statements[6]).lower()
+    assert "btrim" in lookahead, "debounce lookahead lost its readable-content filter"
+
+
+# ---------------------------------------------------------------------------
+# The predicate itself
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("content", ["", "   ", "\n", "\t", " \n\t ", None])
+def test_is_unreadable_true(content):
+    assert is_unreadable(content) is True
+
+
+@pytest.mark.parametrize("content", ["hola", " hola ", "0", "?", "👍"])
+def test_is_unreadable_false(content):
+    assert is_unreadable(content) is False
