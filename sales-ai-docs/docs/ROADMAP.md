@@ -218,6 +218,11 @@ persistencia, y qué llega al pipeline conversacional. Dato duro nuevo para ese 
 en `hash`. Cualquier diseño que guarde la URL en vez del binario guarda un enlace muerto.
 También pendiente: el `caption` de imagen, que hoy no se extrae y por eso una imagen con
 caption cae en "sin contenido" como todas.
+**Dentro del alcance al abrir: revisar el umbral del circuit breaker.** Cerrar P16 hace que
+una imagen legible vuelva a generar turno, así que **restaura implícitamente la sensibilidad
+del breaker** que el guard de contenido ilegible redujo (ver la nota de calibración en P8).
+El umbral de 3 vuelve a contar como cuando se calibró; hay que decidir a conciencia si sigue
+siendo el correcto en vez de que el cambio ocurra de rebote.
 **Alcance**: grande. Probablemente [ADR] para decidir hasta dónde (¿solo registrar que
 llegó media?, ¿pasarla al LLM?, ¿persistir el comprobante?, ¿cuánto se retiene?). Decidir
 por separado.
@@ -544,6 +549,14 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
   superficies: backend, prompt DB migración 011, n8n). Verificado en prod 2026-08-01:
   una venta, autor operador, cero fantasmas del LLM. Fix con verificación por mutación.
 - **P8 · Circuit breaker** (3 outbounds idénticos consecutivos → human_handoff).
+  **Nota de calibración (2026-08-23, dato — no hay acción abierta)**: el umbral de 3 se
+  calibró cuando TODO inbound generaba turno, incluidos los ilegibles. Desde el guard de
+  contenido ilegible, un medio ya no produce outbound, así que deja de aportar su voto a la
+  cuenta de idénticos consecutivos: **el breaker es hoy menos sensible que cuando se
+  calibró**. Observado el 2026-08-23 19:37 UTC — dos outbounds idénticos seguidos
+  («¿Cuántas bolsas…?», execs 10880 y 10882) separados por una imagen ciega que antes habría
+  respondido y ahora calla; con 2 de 3, el breaker no disparó. Revisar el umbral es parte
+  del alcance de P16 (ver P16), no de una acción propia.
 - **P3 · Gate de payment_confirmation permeable** (recálculo tras el gate de user_confirmation).
   **Superseded by ADR-009**: hoy el `payment_confirmation` del LLM se descarta siempre
   (`OPERATOR_ONLY_FIELDS`), así que el escenario del gate ya no puede existir. Los tests se
