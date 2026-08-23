@@ -9,8 +9,15 @@ Performs 10 operations in a single database transaction:
   6. Acquire advisory lock
   7. Persist inbound message
   8. Update conversation counters
+  8b. Persist and release the advisory lock
+  8c. Suppress the turn if the message has no readable content
+  8d. Rapid-fire debounce
   9. Compute GoalStrategyEngine directive
   10. Persist strategy state + return context
+
+Steps 8c and 8d both return early via `build_suppressed_response`: a complete,
+valid response that tells n8n not to answer. The message is already committed
+by 8b, so the next turn still sees it in `recent_messages`.
 """
 from __future__ import annotations
 
@@ -21,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update, text
+from sqlalchemy import func, select, update, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +75,68 @@ class DuplicateMessageError(IngestError):
 
 class UserBlockedError(IngestError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Readable content
+# ---------------------------------------------------------------------------
+def is_unreadable(content: Optional[str]) -> bool:
+    """True when there is nothing for the LLM to answer.
+
+    Deliberately a question about CONTENT, not about `message_type`. Meta keeps
+    inventing types — `unsupported`, `edit`, and whatever comes next — so an
+    allowlist of types is a new bug per type. The right question is not "what
+    kind of message is this?" but "is there anything to reply to?".
+
+    Measured against prod on 2026-08-22: of 79 inbound that got through, 20 had
+    nothing readable (16 `unsupported`, 3 `audio`, 1 `edit`) and the bot
+    answered every one of them blind.
+    """
+    return not (content or "").strip()
+
+
+#: SQL twin of :func:`is_unreadable`, for the debounce lookahead. Keep the two
+#: in step: if one learns a new notion of "empty", so must the other.
+def _sql_has_readable_content(column):
+    return func.btrim(func.coalesce(column, "")) != ""
+
+
+# ---------------------------------------------------------------------------
+# Suppressed-turn response
+# ---------------------------------------------------------------------------
+def build_suppressed_response(
+    reason: str,
+    conversation: Optional[Conversation] = None,
+) -> dict:
+    """A complete, valid ingest response that tells n8n *not* to answer.
+
+    Every field of IngestMessageResponse is present. That is the whole point:
+    the debounce path used to return a two-key dict, which the endpoint then
+    fed to IngestMessageResponse(**result) and blew up with 500 on every
+    single coalescence. The path never once returned a valid response.
+
+    `conversation_state` matters as much as `should_respond`: the n8n node
+    "IF Should Respond" tests BOTH, so a missing state is not inert.
+
+    When a conversation is available (debounce, unreadable content) the real
+    identifiers go out instead of placeholders; the duplicate path has no
+    conversation to report and keeps the historical dummy uuid.
+    """
+    return {
+        "should_respond": False,
+        "reason": reason,
+        "conversation_id": conversation.id if conversation is not None else uuid.uuid4(),
+        "conversation_state": conversation.state if conversation is not None else "active",
+        "strategy_directive": "",
+        "strategy_meta": {},
+        "strategy_version": conversation.strategy_version if conversation is not None else 0,
+        "client_config": {},
+        "user_context": {},
+        "product_catalog": [],
+        "business_context": "",
+        "conversation_summary": "",
+        "recent_messages": [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -203,12 +272,31 @@ async def ingest_message(
     conversation.message_count += 1
     conversation.last_message_at = now
 
-    # --- 8b. Rapid-fire debounce ---------------------------------------------
+    # --- 8b. Persist and release the advisory lock ---------------------------
     # Flush to persist the message, then commit to release the advisory lock
-    # so other messages from the same user can be inserted. Sleep briefly,
-    # then check if a newer inbound arrived — if so, let that one respond.
+    # so other messages from the same user can be inserted.
     await session.flush()
     await session.commit()
+
+    # --- 8c. Unreadable-content guard ----------------------------------------
+    # The message is persisted and committed by now, so the next turn will still
+    # find it in recent_messages — that is what makes suppressing it safe. What
+    # we skip is everything downstream: the 5s debounce wait, the strategy
+    # computation, and (via should_respond=false) the LLM call.
+    #
+    # Order is not negotiable: persist, THEN suppress. A guard in n8n would
+    # never have called /ingest at all and the message would vanish.
+    if is_unreadable(content):
+        logger.info(
+            "Unreadable content: no turn for %s (message_type=%s)",
+            chakra_message_id,
+            message_type,
+        )
+        return build_suppressed_response("unreadable_content", conversation)
+
+    # --- 8d. Rapid-fire debounce ---------------------------------------------
+    # Sleep briefly, then check whether a newer inbound arrived — if so, let
+    # that one respond instead of answering each burst message separately.
     await asyncio.sleep(5)
 
     newer_msg = await session.execute(
@@ -217,6 +305,10 @@ async def ingest_message(
             Message.conversation_id == conversation.id,
             Message.direction == "inbound",
             Message.created_at > msg_timestamp,
+            # Only defer to a message that will actually take a turn. Without
+            # this, a text followed by a voice note answers nothing at all:
+            # the text defers to the audio, and the audio suppresses itself.
+            _sql_has_readable_content(Message.content),
         )
         .limit(1)
     )
@@ -225,7 +317,7 @@ async def ingest_message(
             "Debounce: newer message exists, skipping response for %s",
             chakra_message_id,
         )
-        return {"should_respond": False, "reason": "debounce"}
+        return build_suppressed_response("debounce", conversation)
 
     # Re-acquire advisory lock for the rest of the processing
     lock_key2 = int(hashlib.sha1(str(conversation.id).encode()).hexdigest(), 16) % (2**63)
