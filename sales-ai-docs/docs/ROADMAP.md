@@ -205,6 +205,19 @@ clienta respondió "🤔"). Medido en DB: **50 inbound con content vacío = 15,6
 `message_type` además de la descarga de bytes. Y la imagen ciega de hoy no era un
 comprobante: era la identificación del producto — raíz de que `product_id` nunca se
 resolviera (ver P15/H6).
+**Alcance REDUCIDO (2026-08-23), no cerrado.** La mitad barata está hecha en
+`feat/allowlist-contenido-ilegible`: un mensaje sin contenido legible se persiste pero **no
+genera turno** (`reason: "unreadable_content"`), así que el 15,6% de inbound ilegible dejó de
+producir respuestas a ciegas. La regla mira el CONTENIDO, no el `message_type` — enumerar
+tipos era un bug nuevo por cada tipo que Meta invente, así que el "allowlist de
+`message_type`" que pedía el párrafo anterior quedó descartado como diseño.
+**Lo que sigue abierto y sigue siendo el frente**: descarga de los bytes desde Chakra,
+persistencia, y qué llega al pipeline conversacional. Dato duro nuevo para ese diseño
+(diagnóstico 2026-08-22): la URL firmada de `lookaside.fbsbx.com` vive **301–302 s** desde el
+`timestamp` del mensaje (medido en 8 payloads, `ext − timestamp`), sin `oe`/`oh` — la firma va
+en `hash`. Cualquier diseño que guarde la URL en vez del binario guarda un enlace muerto.
+También pendiente: el `caption` de imagen, que hoy no se extrae y por eso una imagen con
+caption cae en "sin contenido" como todas.
 **Alcance**: grande. Probablemente [ADR] para decidir hasta dónde (¿solo registrar que
 llegó media?, ¿pasarla al LLM?, ¿persistir el comprobante?, ¿cuánto se retiene?). Decidir
 por separado.
@@ -322,6 +335,13 @@ camino coalescido (`services/ingest.py:228`) devuelve `{'should_respond': False,
 El fix es devolver un modelo válido — un cambio acotado, con su test, independiente del
 rediseño. La race de fondo (dos outbounds idénticos consecutivos 19:41:26/19:41:33 — a UNO
 del circuit breaker) sigue siendo de este ADR.
+**✅ Deuda #13 CERRADA (2026-08-23)**, rama `feat/allowlist-contenido-ilegible`:
+`build_suppressed_response()` construye la respuesta completa para los tres caminos de
+supresión (`debounce`, `duplicate`, `unreadable_content`), y `reason` pasó a ser campo del
+schema. Detalle que el diagnóstico del 2026-08-22 aclaró: el 500 no mataba la ejecución
+porque `POST Ingest Message` lleva `continueOnFail: true` — el AxiosError se convertía en un
+item sin `should_respond` y caía a la rama false de `IF Should Respond`. **La race de fondo
+sigue abierta y sigue siendo de este ADR.**
 **Decidir P23 ANTES de escribir este ADR**: si adoptamos resume por checkpoint, el modelo
 temporal de referencia cambia y este rediseño se rehace.
 Riesgo: [ADR] + [B] — toca hot path, el north-star lo reescribiría. No tocar sin ADR.
@@ -549,9 +569,10 @@ solo entonces agrega capacidad nueva. Nada de P22–P27 se abre antes del punto 
 1. ~~**P14** (LID/privacidad)~~ — ✅ CERRADO, verificado e2e (08-18) y con cliente real
    (08-19). Quedan las preguntas a Chakra anotadas en la entrada (medios, facturación
    2026-10-01) — hacerlas junto con P16.
-2. **Fix puntual deuda #13** (contrato de respuesta del debounce) — un return + un test.
-   NO es abrir P7: es dejar de responder 500 en cada ráfaga de mensajes. Hoy ocurre en
-   toda conversación de cliente rápido (4 veces en la venta del 08-19).
+2. ~~**Fix puntual deuda #13**~~ — ✅ HECHO (2026-08-23, rama
+   `feat/allowlist-contenido-ilegible`), junto con el guard de contenido ilegible que
+   dependía de él: el guard suprime el turno por el mismo camino que reventaba con 500, así
+   que el contrato tenía que arreglarse primero. Pendiente de merge y despliegue.
 3. **P15** (user_confirmation) — hermano del bug cerrado; diagnóstico primero. Su evidencia
    ya no es hipotética (aviso falso al operador el 08-19). Incluye decidir si el gate exige
    `product_id` (H6 del postmortem).
@@ -609,7 +630,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P13 | Conocimiento curado de café en el prompt | 🔵 decisión de producto | — |
 | P14 | Mensajes con LID/privacidad se pierden en silencio | ✅ verificado e2e + cliente real 2026-08-19 | deuda #3 (parcial) |
 | P15 | `user_confirmation` por interpretación del LLM | 🔴 | — |
-| P16 | Medios entrantes con content vacío (imagen y audio) | 🔴 [ADR] | — |
+| P16 | Medios entrantes con content vacío (imagen y audio) | 🟡 [ADR] alcance reducido 2026-08-23: el guard de contenido ilegible está hecho; falta la descarga de medios | deuda #13 ✅ |
 | P17 | Barrido de código muerto post-P11 | 🟢 | — |
 | P18 | Diagnóstico de datos legacy | 🟢 | — |
 | P19 | Mensaje engañoso de Telegram (caso legado) | 🟢 | — |
