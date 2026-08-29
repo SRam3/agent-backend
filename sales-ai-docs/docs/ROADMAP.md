@@ -536,9 +536,11 @@ solo frente con dos identificadores, ninguno válido. Aquí queda unificado como
 del caso no cubierto: `docs/registros/registro-P8-limitaciones.md`.
 **Estado**: diseñado, no implementar aún. Excepción posible: la señal de velocidad si la
 amenaza se materializa. P8 (circuit breaker por 3 idénticos) ya cubre el caso trivial.
-**ADR-010 pendiente de escribir**: este roadmap lo daba por "diseñado", pero no existe
-ningún `ADR-010-*.md` en `docs/decisions/` (el índice llega hasta 009). El diseño vive en
-esta entrada; falta convertirlo en decisión escrita antes de implementar.
+**Su ADR sigue pendiente de escribir, y ya NO es el 010.** Este roadmap daba por "diseñado"
+un ADR-010 para P10 que nunca se escribió, y entre tanto el número lo tomó el ADR del
+resumen del pedido (`ADR-010-backend-gobierna-resumen.md`, P15). Se aplica el precedente de
+ADR-008: **el ADR que efectivamente se escribe toma el número**. P10 tomará el siguiente
+libre cuando se escriba. El diseño vive por ahora en esta entrada.
 Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
 
 ---
@@ -637,12 +639,12 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P7 | Debounce: race + conexión ocupada | ⬜ [ADR] | deuda #2 |
 | P8 | Circuit breaker para loops conversacionales | ✅ | — |
 | P9 | Microfixes n8n (`latency_ms`, `slice(-10)`) | ⬜ | — |
-| P10 | Detección de conversaciones no-humanas + estancamiento del DAG | 🔵 [ADR-010 por escribir] | deuda #10 (remanente) |
+| P10 | Detección de conversaciones no-humanas + estancamiento del DAG | 🔵 [ADR por escribir, ya no el 010] | deuda #10 (remanente) |
 | P11 | Fix venta duplicada — operador única autoridad del pago | ✅ | — |
 | P12 | Captura oportunista de ORDER_FIELDS en el directive | ✅ | — |
 | P13 | Conocimiento curado de café en el prompt | 🔵 decisión de producto | — |
 | P14 | Mensajes con LID/privacidad se pierden en silencio | ✅ verificado e2e + cliente real 2026-08-19 | deuda #3 (parcial) |
-| P15 | `user_confirmation` por interpretación del LLM | 🔴 | — |
+| P15 | `user_confirmation` por interpretación del LLM | 🟡 ADR-010 implementado; falta aplicar migración 013 y verificar en prod | — |
 | P16 | Medios entrantes con content vacío (imagen y audio) | 🟡 [ADR] alcance reducido 2026-08-23: el guard de contenido ilegible está hecho; falta la descarga de medios | deuda #13 ✅ |
 | P17 | Barrido de código muerto post-P11 | 🟢 | — |
 | P18 | Diagnóstico de datos legacy | 🟢 | — |

@@ -338,6 +338,12 @@ async def ingest_message(
 
     directive = _engine.compute(goal, collected_data, business_rules)
 
+    # Live language (ADR-008). Computed here, before the snapshot is written, so
+    # /agent/action can read it back: the summary the BACKEND now renders has to
+    # come out in the customer's language too (ADR-010 §1), and that call never
+    # sees the inbound text.
+    live_language = detect_language(content)
+
     # --- 10. Persist strategy state ------------------------------------------
     new_strategy_version = conversation.strategy_version + 1
     await session.execute(
@@ -355,6 +361,17 @@ async def ingest_message(
                 "current_checkpoint": directive.current_checkpoint,
                 "missing_fields": directive.missing_fields,
                 "completed_checkpoints": directive.completed_checkpoints,
+                # Which inbound produced this strategy_version (ADR-010 §5,
+                # condition 3). /agent/action never receives the customer's
+                # message, and asking for "the latest inbound" there is wrong:
+                # the debounce commits a message at step 8b and only bumps the
+                # version 5s later, so a burst leaves a newer inbound that has
+                # not invalidated anything yet — and the condition would pass on
+                # a message the customer had not yet been answered. Writing it
+                # here ties the verdict to the message the LLM was answering,
+                # with no change to n8n (strategy_version already round-trips).
+                "trigger_message_at": msg_timestamp.isoformat(),
+                "live_language": live_language,
             },
         )
     )
@@ -416,10 +433,8 @@ async def ingest_message(
         for m in reversed(recent_rows.scalars().all())
     ]
 
-    # --- Live language detection (ADR-008) ------------------------------------
-    # Deterministic, per-turn, independent of the deferred profile compaction.
-    # The directive goes FIRST in conversation_summary: position drives adherence.
-    live_language = detect_language(content)
+    # --- Conversation summary block -------------------------------------------
+    # The language directive goes FIRST: position drives adherence (ADR-008).
     conversation_summary = (
         format_language_directive(live_language)
         + "\n\n"

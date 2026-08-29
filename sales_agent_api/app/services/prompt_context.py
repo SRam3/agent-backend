@@ -42,36 +42,44 @@ def format_business_context(
         sections.append("\n".join(lines))
 
     # --- Shipping rules ---
+    # ADR-010 §3: only cities with a real, fixed rate carry a number, and they
+    # carry it WITHOUT "aprox." — hedging a rate we actually know reads as if we
+    # were guessing. Everything else is stated as pending, never quoted: the old
+    # per-zone ranges were figures nobody ever checked against a real shipment.
+    # The summary the backend sends is the authority on the applied cost; this
+    # block only exists so the LLM can answer a question about shipping.
     shipping_rules = business_rules.get("shipping_rules")
     if shipping_rules:
-        lines = ["SHIPPING RULES (all values are approximate, pending carrier confirmation):"]
         currency = business_rules.get("currency", "COP")
-        for city, rule in shipping_rules.items():
-            if city in ("international", "zones"):
+        cities = shipping_rules.get("cities")
+        if not isinstance(cities, dict):
+            # Legacy (migration 005) shape, still readable until 013 is applied.
+            cities = {
+                name: rule
+                for name, rule in shipping_rules.items()
+                if isinstance(rule, dict) and name not in ("zones", "international", "cities")
+            }
+        lines = ["SHIPPING RULES:"]
+        for city, rule in cities.items():
+            cost = rule.get("cost") if isinstance(rule, dict) else None
+            if cost is None:
                 continue
-            elif city == "other":
-                method = rule.get("method", "")
-                cost_note = rule.get("cost_note", "")
-                lines.append(f"- Other cities: {method}, {cost_note}")
-            elif isinstance(rule, dict):
-                method = rule.get("method", "")
-                cost = rule.get("cost")
-                cost_note = rule.get("cost_note", "")
-                if cost is not None:
-                    lines.append(f"- {city}: {method} aprox. {_format_price(cost, currency)}")
-                else:
-                    lines.append(f"- {city}: {method}, {cost_note}")
-        # Render zones for cities not explicitly listed
-        zones = shipping_rules.get("zones")
-        if zones:
-            lines.append("SHIPPING ZONES (for cities not listed above):")
-            for zone_name, zone_info in zones.items():
-                if isinstance(zone_info, dict):
-                    cost = zone_info.get("cost_range", zone_info.get("cost_note", ""))
-                    lines.append(f"- {zone_name}: {zone_info.get('method', 'transportadora')}, aprox. {cost}")
+            lines.append(f"- {city}: {_format_price(cost, currency)}")
+        lines.append(
+            "- Any other city: the shipping cost is confirmed with the customer "
+            "afterwards. NEVER quote, estimate or invent a figure for a city "
+            "that is not listed above; say that we confirm it and let them know."
+        )
+        if shipping_rules.get("pickup") is False:
+            lines.append("- There is no pickup at the farm. Everything ships.")
         international = shipping_rules.get("international")
         if international:
             lines.append(f"- International: {international}")
+        lines.append(
+            "TOTALS: never state a total or do the arithmetic yourself. The "
+            "system sends the order summary with the prices when the order is "
+            "complete."
+        )
         sections.append("\n".join(lines))
 
     # --- Payment methods ---

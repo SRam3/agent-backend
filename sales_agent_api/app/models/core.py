@@ -186,6 +186,12 @@ class Conversation(Base):
     )
     last_strategy_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     strategy_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # Order summary state (migration 013, ADR-010). Own columns and NOT inside
+    # extracted_context on purpose: these are facts OWNED by the backend, not
+    # slots proposed by the LLM. Mixing them where the model's proposals are
+    # merged recreates the risk that forced OPERATOR_ONLY_FIELDS into existence.
+    order_summary_fingerprint: Mapped[Optional[str]] = mapped_column(String(64))
+    order_summary_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     client: Mapped["Client"] = relationship("Client", back_populates="conversations", foreign_keys=[client_id])
     client_user: Mapped["ClientUser"] = relationship("ClientUser", back_populates="conversations", foreign_keys=[client_user_id])

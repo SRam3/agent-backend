@@ -76,7 +76,11 @@ def test_bug_sequence_yields_exactly_one_sale():
     )
     assert "payment_confirmation" not in accepted
     assert rejections == [
-        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+        {
+            "field": "payment_confirmation",
+            "gate": "operator",
+            "missing": ["operator_confirmation"],
+        }
     ]
 
     # the context the operator's button then finds — still unpaid

@@ -17,7 +17,7 @@ Focus:
 import sys
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../sales_agent_api"))
@@ -27,9 +27,59 @@ from app.services.agent_action import (
     ORDER_FIELDS,
     STRATEGY_FIELDS,
     compute_context_updates,
+    is_new_user_confirmation,
+    snapshot_language,
+    trigger_message_at,
     _build_purchase_record,
     _coerce_int,
 )
+from sqlalchemy.sql.dml import Update
+
+from app.services.order_summary import (
+    FIXED,
+    NO_SUMMARY,
+    ORDER_MODIFIED_THIS_TURN,
+    Shipping,
+    SummaryState,
+    compute_fingerprint,
+)
+
+# --- ADR-010 fixtures -------------------------------------------------------
+# The gate now needs backend-owned facts: which summary we last presented, when,
+# and which inbound triggered this turn. These build a conversation in which a
+# summary IS standing and current, so a confirmation can legitimately pass.
+MANIZALES = Shipping(cost=Decimal("5000"), status=FIXED)
+SENT_AT = datetime(2026, 8, 19, 15, 0, tzinfo=timezone.utc)
+AFTER = SENT_AT + timedelta(seconds=20)
+
+
+def summarisable_context(**overrides) -> dict:
+    ctx = {
+        "product_id": "1f1f1f1f-0000-0000-0000-000000000001",
+        "quantity": 2,
+        "grind_preference": "grano",
+        "full_name": "Ana Ruiz",
+        "phone": "3001234567",
+        "shipping_address": "Cra 1 # 2-3",
+        "shipping_city": "Manizales",
+    }
+    ctx.update(overrides)
+    return ctx
+
+
+def standing_summary(context: dict) -> SummaryState:
+    return SummaryState(
+        fingerprint=compute_fingerprint(context, MANIZALES), sent_at=SENT_AT
+    )
+
+
+def confirmable(context: dict) -> dict:
+    """The kwargs that make a user_confirmation acceptable for `context`."""
+    return {
+        "summary_state": standing_summary(context),
+        "trigger_message_at": AFTER,
+        "shipping": MANIZALES,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -108,24 +158,133 @@ def test_user_confirmation_rejected_when_incomplete():
     assert rejections == [
         {
             "field": "user_confirmation",
+            "gate": "data",
             "missing": ["full_name", "phone", "shipping_address", "shipping_city"],
         }
     ]
 
 
 def test_user_confirmation_accepted_when_complete():
-    ctx = {
-        "full_name": "Ana Ruiz",
-        "phone": "3001234567",
-        "shipping_address": "Cra 1 # 2-3",
-        "shipping_city": "Manizales",
-    }
+    """Sufficient data AND a standing, current summary the customer answered
+    after seeing it. This is the 2026-07-15 shape, the only legitimate
+    confirmation in the whole history."""
+    ctx = summarisable_context()
     accepted, strategy_accepted, rejections = compute_context_updates(
-        {"user_confirmation": "sí"}, ctx
+        {"user_confirmation": "sí"}, ctx, **confirmable(ctx)
     )
     assert accepted.get("user_confirmation") == "sí"
     assert strategy_accepted.get("user_confirmation") == "sí"
     assert rejections == []
+
+
+def test_sufficient_data_alone_no_longer_confirms():
+    """THE regression guard of ADR-010. Data sufficiency was never the question:
+    it is exactly what let "Barrio El Campin" close a sale on 2026-08-19. With
+    all four slots present but no summary ever presented, the confirmation is
+    refused."""
+    accepted, _, rejections = compute_context_updates(
+        {"user_confirmation": "sí"}, summarisable_context()
+    )
+    assert "user_confirmation" not in accepted
+    assert rejections == [
+        {"field": "user_confirmation", "gate": "context", "missing": [NO_SUMMARY]}
+    ]
+
+
+def test_confirmation_riding_on_an_order_change_is_refused():
+    """The 2026-07-20 shape: "Unidad campestre sorry" is a correction, not a
+    confirmation. The turn moves the order out from under the summary."""
+    ctx = summarisable_context()
+    accepted, _, rejections = compute_context_updates(
+        {"user_confirmation": "sí", "shipping_address": "Unidad campestre"},
+        ctx,
+        **confirmable(ctx),
+    )
+    assert "user_confirmation" not in accepted
+    assert accepted["shipping_address"] == "Unidad campestre"
+    assert ORDER_MODIFIED_THIS_TURN in rejections[0]["missing"]
+
+
+# ---------------------------------------------------------------------------
+# Invalidation (ADR-010 §6)
+# ---------------------------------------------------------------------------
+def test_a_modification_invalidates_a_standing_confirmation():
+    """The path that fixes the "impossible to unmark" defect. The customer had
+    confirmed; then they changed the quantity. The confirmation they gave was for
+    the previous order, so the backend clears it."""
+    ctx = summarisable_context(user_confirmation=True)
+    accepted, strategy_accepted, _ = compute_context_updates({"quantity": 5}, ctx)
+    assert accepted["user_confirmation"] is False
+    assert strategy_accepted["user_confirmation"] is False
+
+
+def test_invalidation_writes_false_instead_of_deleting_the_key():
+    """False, not a missing key: every reader uses .get() truthiness
+    (confirm_payment.py:78, goal_strategy, prompt_context), and False keeps the
+    trace that a confirmation once stood."""
+    ctx = summarisable_context(user_confirmation=True)
+    accepted, _, _ = compute_context_updates({"quantity": 5}, ctx)
+    assert "user_confirmation" in accepted
+    assert accepted["user_confirmation"] is False
+
+
+def test_reconfirming_after_a_correction_is_a_new_transition():
+    """So the operator gets a Telegram notice for the CORRECTED order, not one
+    stale notice for the order the customer already changed."""
+    invalidated = summarisable_context(quantity=5, user_confirmation=False)
+    accepted, strategy_accepted, rejections = compute_context_updates(
+        {"user_confirmation": "sí"}, invalidated, **confirmable(invalidated)
+    )
+    assert rejections == []
+    assert is_new_user_confirmation(strategy_accepted, invalidated) is True
+
+
+def test_an_unchanged_order_does_not_invalidate():
+    """The LLM re-proposes the whole cumulative extracted_data every turn. A
+    re-proposal of the same values is not a modification."""
+    ctx = summarisable_context(user_confirmation=True)
+    accepted, _, _ = compute_context_updates(
+        {"quantity": "2", "full_name": "Ana Ruiz"}, ctx
+    )
+    assert accepted.get("user_confirmation") is not False
+
+
+def test_llm_cannot_unmark_a_confirmation_itself():
+    """No-regression guard: the truthy filter of compute_context_updates is NOT
+    relaxed by ADR-010. Unmarking is the backend's authority, on deterministic
+    evidence that the order moved — never the model's assertion."""
+    ctx = summarisable_context(user_confirmation=True)
+    accepted, strategy_accepted, _ = compute_context_updates(
+        {"user_confirmation": False}, ctx
+    )
+    assert "user_confirmation" not in accepted
+    assert "user_confirmation" not in strategy_accepted
+
+
+# ---------------------------------------------------------------------------
+# trigger_message_at / snapshot_language (read back from strategy_snapshot)
+# ---------------------------------------------------------------------------
+def test_trigger_message_at_reads_the_snapshot():
+    assert trigger_message_at({"trigger_message_at": "2026-08-19T15:00:20+00:00"}) == AFTER
+
+
+def test_trigger_message_at_fails_closed():
+    """Missing or unparseable ⇒ None ⇒ condition 3 refuses. A refusal costs a
+    turn of friction; a wrong acceptance records a sale."""
+    assert trigger_message_at(None) is None
+    assert trigger_message_at({}) is None
+    assert trigger_message_at({"trigger_message_at": "no es una fecha"}) is None
+
+
+def test_naive_trigger_timestamp_is_treated_as_utc():
+    assert trigger_message_at({"trigger_message_at": "2026-08-19T15:00:20"}) == AFTER
+
+
+def test_snapshot_language_defaults_to_spanish():
+    assert snapshot_language({"live_language": "en"}) == "en"
+    assert snapshot_language({"live_language": "es"}) == "es"
+    assert snapshot_language({}) == "es"
+    assert snapshot_language(None) == "es"
 
 
 def test_payment_confirmation_rejected_when_incomplete():
@@ -134,7 +293,11 @@ def test_payment_confirmation_rejected_when_incomplete():
     )
     assert "payment_confirmation" not in accepted
     assert rejections == [
-        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+        {
+            "field": "payment_confirmation",
+            "gate": "operator",
+            "missing": ["operator_confirmation"],
+        }
     ]
 
 
@@ -153,7 +316,11 @@ def test_payment_confirmation_rejected_even_with_every_prereq_present():
     assert "payment_confirmation" not in accepted
     assert "payment_confirmation" not in strategy_accepted
     assert rejections == [
-        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+        {
+            "field": "payment_confirmation",
+            "gate": "operator",
+            "missing": ["operator_confirmation"],
+        }
     ]
 
 
@@ -214,27 +381,32 @@ def test_payment_rejected_when_user_confirmation_came_from_prior_turn():
     assert "payment_confirmation" not in accepted
     assert "payment_confirmation" not in strategy_accepted
     assert rejections == [
-        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+        {
+            "field": "payment_confirmation",
+            "gate": "operator",
+            "missing": ["operator_confirmation"],
+        }
     ]
 
 
 def test_valid_user_confirmation_survives_alongside_a_rejected_payment():
     """A payment proposal must not poison the rest of the turn: a
     user_confirmation with every prerequisite present is still accepted."""
-    ctx = {
-        "full_name": "Ana Ruiz",
-        "phone": "3001234567",
-        "shipping_address": "Cra 1 # 2-3",
-        "shipping_city": "Manizales",
-    }
+    ctx = summarisable_context()
     accepted, strategy_accepted, rejections = compute_context_updates(
-        {"user_confirmation": "sí", "payment_confirmation": "comprobante.jpg"}, ctx
+        {"user_confirmation": "sí", "payment_confirmation": "comprobante.jpg"},
+        ctx,
+        **confirmable(ctx),
     )
     assert accepted.get("user_confirmation") == "sí"
     assert strategy_accepted.get("user_confirmation") == "sí"
     assert "payment_confirmation" not in accepted
     assert rejections == [
-        {"field": "payment_confirmation", "missing": ["operator_confirmation"]}
+        {
+            "field": "payment_confirmation",
+            "gate": "operator",
+            "missing": ["operator_confirmation"],
+        }
     ]
 
 
@@ -266,7 +438,9 @@ def test_implausible_phone_rejected():
     )
     assert "phone" not in accepted
     assert "phone" not in strategy_accepted
-    assert rejections == [{"field": "phone", "missing": ["plausible_format"]}]
+    assert rejections == [
+        {"field": "phone", "gate": "format", "missing": ["plausible_format"]}
+    ]
 
 
 def test_implausible_phone_leaves_rest_of_turn_intact():
@@ -279,7 +453,9 @@ def test_implausible_phone_leaves_rest_of_turn_intact():
     assert accepted.get("full_name") == "Ana Ruiz"
     assert accepted.get("quantity") == 2
     assert strategy_accepted.get("full_name") == "Ana Ruiz"
-    assert rejections == [{"field": "phone", "missing": ["plausible_format"]}]
+    assert rejections == [
+        {"field": "phone", "gate": "format", "missing": ["plausible_format"]}
+    ]
 
 
 def test_rejected_phone_does_not_satisfy_user_confirmation_gate():
@@ -325,14 +501,9 @@ def test_stand_case_phone_passes_the_gate():
 def test_phone_already_in_context_is_not_regated():
     """El gate valida el phone PROPUESTO este turno; uno ya persistido en
     extracted_context no se toca."""
+    ctx = summarisable_context(phone="basura-previa")
     accepted, _, rejections = compute_context_updates(
-        {"user_confirmation": "sí"},
-        {
-            "phone": "basura-previa",
-            "full_name": "Ana Ruiz",
-            "shipping_address": "Cra 1 # 2-3",
-            "shipping_city": "Manizales",
-        },
+        {"user_confirmation": "sí"}, ctx, **confirmable(ctx)
     )
     assert accepted.get("user_confirmation") == "sí"
     assert rejections == []
@@ -494,15 +665,21 @@ class _StubSession:
 _CLIENT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
-def _make_conversation(state="active"):
+def _make_conversation(state="active", extracted_context=None, summary_state=None,
+                      strategy_snapshot=None):
+    state_ = summary_state or SummaryState(fingerprint=None, sent_at=None)
     return SimpleNamespace(
         id=_CONV_ID,
         client_id=_CLIENT_ID,
         client_user_id=uuid.uuid4(),
         state=state,
         strategy_version=3,
-        extracted_context={},
+        extracted_context=extracted_context if extracted_context is not None else {},
         active_goal="close_sale",
+        # ADR-010 (migration 013)
+        strategy_snapshot=strategy_snapshot,
+        order_summary_fingerprint=state_.fingerprint,
+        order_summary_sent_at=state_.sent_at,
     )
 
 
@@ -758,6 +935,7 @@ def test_closed_conversation_is_never_resurrected_by_auto_escalate():
         [
             _StubResult(scalar=conversation),
             _StubResult(scalars_list=["B", "A"]),
+            _StubResult(scalar=SimpleNamespace(business_rules={})),
         ]
     )
 
@@ -774,5 +952,148 @@ def test_closed_conversation_is_never_resurrected_by_auto_escalate():
     assert conversation.state == "closed"
     assert result["new_state"] == "closed"
     assert not any(s.startswith("escalated:") for s in result["side_effects"])
-    # the auto-escalate block was never entered: no client lookup, no UPDATE
-    assert len(session.executed) == 2
+    # The auto-escalate block was never entered: no UPDATE of any kind was
+    # issued. (The client lookup is no longer a proxy for that — since ADR-010
+    # it happens on every turn, to resolve the shipping rules.)
+    assert not any(isinstance(stmt, Update) for stmt in session.executed)
+
+
+# ---------------------------------------------------------------------------
+# The backend renders and sends the summary (ADR-010 §1) — through the real
+# process_agent_action path, with a stub session.
+# ---------------------------------------------------------------------------
+_ARENILLO_RULES = {
+    "shipping_rules": {"cities": {"Manizales": {"cost": 5000}}},
+    "presentation": {"es": "bolsas de 340g", "es_singular": "bolsa de 340g"},
+}
+_PRODUCT_UUID = "1f1f1f1f-0000-0000-0000-000000000001"
+
+
+def _summary_session(conversation, price=Decimal("40000"), profile_merge=False):
+    """conversation → previous outbounds → client → [profile lookups] → price.
+
+    `profile_merge` covers the turns where something is actually accepted: the
+    context UPDATE plus the two client_user lookups (profile merge + lifecycle
+    bump) all consume from the queue before the price fetch.
+    """
+    results = [
+        _StubResult(scalar=conversation),
+        _StubResult(scalars_list=[]),
+        _StubResult(scalar=SimpleNamespace(business_rules=_ARENILLO_RULES)),
+    ]
+    if profile_merge:
+        results += [_StubResult(), _StubResult(), _StubResult()]
+    results.append(_StubResult(scalar=price))
+    return _StubSession(results)
+
+
+def _run(session, response_text="Claro, ya te confirmo.", extracted_data=None):
+    return asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=3,
+            response_text=response_text,
+            extracted_data=extracted_data,
+        )
+    )
+
+
+def test_backend_summary_replaces_the_llm_text():
+    """The replacement IS the fix: it turns "the summary was sent" into a fact
+    the backend owns, and takes the money arithmetic away from the model."""
+    conversation = _make_conversation(
+        extracted_context=summarisable_context(product_id=_PRODUCT_UUID)
+    )
+    session = _summary_session(conversation)
+
+    result = _run(session, response_text="El total es como $90.000 más o menos.")
+
+    assert result["final_response_text"] == (
+        "Va el pedido entonces: 2 bolsas de 340g en grano para Ana Ruiz, "
+        "al 3001234567, en Manizales, Cra 1 # 2-3. "
+        "El café son $80.000 y el envío $5.000, total $85.000. "
+        "¿Todo bien con esos datos?"
+    )
+    assert "order_summary_sent" in result["side_effects"]
+    assert conversation.order_summary_fingerprint is not None
+    assert conversation.order_summary_sent_at is not None
+
+
+def test_the_persisted_outbound_is_the_summary_not_the_discarded_llm_text():
+    """The messages trail must record what the customer actually received —
+    otherwise the next turn's history lies to the LLM, and so does the audit."""
+    conversation = _make_conversation(
+        extracted_context=summarisable_context(product_id=_PRODUCT_UUID)
+    )
+    session = _summary_session(conversation)
+
+    result = _run(session, response_text="El total es como $90.000 más o menos.")
+
+    outbound = next(o for o in session.added if isinstance(o, Message))
+    assert outbound.content == result["final_response_text"]
+    assert "$90.000" not in outbound.content
+
+
+def test_no_summary_without_a_price_so_none_without_a_product():
+    """H6, structurally: no price without product_id, no summary without price,
+    no confirmation without summary. The LLM's text goes out untouched."""
+    conversation = _make_conversation(
+        extracted_context=summarisable_context(product_id=None)
+    )
+    session = _summary_session(conversation, price=None)
+
+    result = _run(session, response_text="¿Cuál te interesa?")
+
+    assert result["final_response_text"] == "¿Cuál te interesa?"
+    assert not any(s.startswith("order_summary") for s in result["side_effects"])
+    assert conversation.order_summary_fingerprint is None
+
+
+def test_the_same_summary_is_never_sent_twice():
+    """Idempotent by construction — which is what lets the circuit breaker stay
+    where it is, comparing the LLM's text before the merge."""
+    context = summarisable_context(product_id=_PRODUCT_UUID)
+    conversation = _make_conversation(
+        extracted_context=context, summary_state=standing_summary(context)
+    )
+    session = _summary_session(conversation)
+
+    result = _run(session, response_text="Quedo atento entonces.")
+
+    assert result["final_response_text"] == "Quedo atento entonces."
+    assert not any(s.startswith("order_summary") for s in result["side_effects"])
+
+
+def test_a_correction_invalidates_and_re_summarises_in_the_same_turn():
+    """The §6 cycle end to end: the customer had confirmed, then changed the
+    quantity. The confirmation is cleared and a fresh summary goes out — a sale
+    is never closed on a summary that no longer reflects what was ordered."""
+    context = summarisable_context(product_id=_PRODUCT_UUID)
+    conversation = _make_conversation(
+        extracted_context={**context, "user_confirmation": True},
+        summary_state=standing_summary(context),
+    )
+    session = _summary_session(conversation, profile_merge=True)
+
+    result = _run(session, extracted_data={"quantity": 4})
+
+    assert conversation.extracted_context["user_confirmation"] is False
+    assert "user_confirmation_invalidated:quantity" in result["side_effects"]
+    assert "order_summary_resent" in result["side_effects"]
+    assert "4 bolsas de 340g" in result["final_response_text"]
+    assert "total $165.000" in result["final_response_text"]
+
+
+def test_a_rejected_confirmation_is_visible_per_condition():
+    """One side effect per failed condition: in production these are the only
+    instrument for knowing which of the four is doing the work."""
+    context = summarisable_context(product_id=_PRODUCT_UUID)
+    conversation = _make_conversation(extracted_context=context)
+    session = _summary_session(conversation)
+
+    result = _run(session, extracted_data={"user_confirmation": "sí"})
+
+    assert f"warning:confirmation_rejected_{NO_SUMMARY}" in result["side_effects"]
+    assert conversation.extracted_context.get("user_confirmation") is None
