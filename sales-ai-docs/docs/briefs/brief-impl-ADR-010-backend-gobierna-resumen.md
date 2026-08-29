@@ -81,24 +81,51 @@ van resueltos, porque cada uno puede romper el fix en silencio.
 
 ### H1 — ¿Cuál es "el inbound que disparó este turno"? (cond. 3)
 
-`/agent/action` no recibe el mensaje entrante. La tentación es consultar el último inbound
-de la conversación, y **es incorrecta**: el debounce (`ingest.py:293`) commitea el mensaje
-en el paso 8b y *después* duerme 5 s antes de bumpear `strategy_version`. Durante esa
-ventana existe un inbound más nuevo que todavía no invalidó nada, así que "el último
-inbound" puede ser uno posterior al que originó este turno — y la condición 3 pasaría por
-un mensaje que el cliente aún no ha visto contestado.
+**Qué significa aquí "sin tocar n8n".** El flujo pasa por n8n, evidentemente: n8n hace las
+dos llamadas (`/ingest` → LLM → `/agent/action`). Lo que el ADR excluye es **editar el
+workflow**. Y hace falta distinguirlo porque este hueco tiene una solución trivial que cae
+justo del lado prohibido.
 
-**Solución sin tocar n8n ni añadir columnas**: el ingest ya escribe `strategy_snapshot`
-(JSONB, propiedad exclusiva del backend, reescrito en cada turno). Se le añade el timestamp
-del mensaje disparador:
+`/agent/action` recibe `conversation_id`, `strategy_version`, `response_text` — y **no
+recibe el mensaje del cliente**. n8n sí lo tiene (le llegó por el webhook), así que lo fácil
+sería añadir un campo al request y que n8n lo mande. Eso es abrir el nodo "POST Agent
+Action" del workflow vivo, con export antes/después y una sesión dedicada: exactamente el
+costo que el ADR saca del alcance, y la razón por la que la fase B2 de P11 sigue pendiente
+desde julio.
+
+Pero el mensaje **ya pasa por el backend** en `/ingest`. Así que el backend puede anotárselo
+a sí mismo en la primera llamada y releerlo en la segunda. El hilo que une ambas es
+`strategy_version`, que n8n ya devuelve sin cambio alguno.
+
+**Por qué no sirve "el último inbound de la conversación".** El debounce
+(`ingest.py:277-296`) commitea el mensaje en el paso 8b y *después* duerme 5 s antes de
+bumpear la versión. En esa ventana existe un inbound más nuevo que todavía no invalidó
+nada:
+
+```
+t=99.2  cliente: "enviame una foto"   → /ingest → version N → n8n llama al LLM
+t=100.0 /agent/action del turno anterior: el backend envía el resumen (sent_at=100)
+t=102.0 cliente: "gracias"            → /ingest → se persiste y COMMITEA (paso 8b)
+                                        …y duerme 5 s antes de bumpear la versión
+t=104.0 /agent/action de la version N llega con user_confirmation=true
+        → no hay 409: "gracias" todavía no bumpeó nada
+        → "último inbound" = 102 > sent_at = 100 → la condición 3 PASA
+        → entra el falso positivo del 08-01
+```
+
+El disparador real era el de t=99.2, **anterior** al resumen. Y esa ráfaga no es un caso
+rebuscado: es el patrón para el que existe el debounce.
+
+**Solución, sin tocar el workflow ni añadir columnas**: el ingest ya escribe
+`strategy_snapshot` (JSONB, propiedad exclusiva del backend, reescrito en cada turno). Se le
+añade el timestamp del mensaje disparador:
 
 ```python
 strategy_snapshot={..., "trigger_message_at": msg_timestamp.isoformat()}
 ```
 
-`/agent/action` lo lee del snapshot que corresponde al `strategy_version` que acaba de
-validar. Queda atado por construcción al mismo turno: si hubiera otro inbound, habría otro
-`strategy_version` y la llamada habría dado 409 (ADR-003).
+`/agent/action` lo lee del snapshot correspondiente al `strategy_version` que acaba de
+validar. Queda atado por construcción al mensaje que el LLM estaba contestando.
 
 ### H2 — Dos relojes distintos en la condición 3
 
@@ -120,20 +147,49 @@ el backend con un lookup, y ahí `"medellin"`, `"Medellín"` y `"MEDELLÍN"` son
 distintas. El ADR escribe `Medellin` sin tilde; `business_rules` de prod tiene `Medellín`
 con tilde (`005:33`). Sin normalización, el cliente de Medellín cae en "por confirmar".
 
-`_normalize_city()`: casefold + quitar diacríticos + colapsar espacios, aplicado a los dos
-lados del lookup. Es un test obligatorio, no un detalle.
+**Decisión: se normaliza.** `_normalize_city()` = casefold + quitar diacríticos + colapsar
+espacios, aplicado a los **dos** lados del lookup (la clave de `business_rules` y lo que
+escribió el cliente). Es un test obligatorio, no un detalle: el cliente escribe sin tilde
+la mayoría de las veces.
 
 ### H4 — Qué exige el resumen para renderizarse
 
 El ADR nombra los campos del fingerprint pero no dice cuáles son *requisito*.
-`grind_preference` entra en el fingerprint y aparece en el ejemplo ("en grano"), pero no es
-checkpoint del DAG ni necesario para la aritmética.
 
-**Decisión**: requisito = `product_id`, `quantity`, `full_name`, `phone`, `shipping_city`,
-`shipping_address`. La molienda es **opcional en el texto**: si no está, la cláusula no se
-escribe; cuando llegue, cambia el fingerprint y sale un resumen nuevo — que es exactamente
-el ciclo del §6. Alternativa descartada: exigirla y quedarnos sin resumen (y por tanto sin
-venta posible) porque el cliente nunca dijo si la quería en grano.
+**Decisión: la molienda es requisito de venta.** Grano o molido no es una preferencia
+decorativa: es lo que se le entrega al cliente, y un pedido sin ella no se puede despachar.
+Requisito completo = `product_id`, `quantity`, `grind_preference`, `full_name`, `phone`,
+`shipping_city`, `shipping_address`. Sin los siete no hay resumen, y sin resumen no hay
+confirmación posible.
+
+**Y eso abre un hueco que hay que cerrar en el mismo cambio** (ver la sección siguiente):
+de esos siete, dos —`quantity` y `grind_preference`— no son checkpoints del DAG, y al
+directive se le ordena hoy explícitamente **no pedirlos**.
+
+### H5 — Nadie pide `quantity` ni `grind_preference`, y ahora bloquean la venta
+
+`quantity` y `grind_preference` son `ORDER_FIELDS` (`agent_action.py:60-62`): se capturan si
+el cliente los menciona, y el directive tiene la instrucción literal *"Do NOT ask for these
+proactively — only capture what they volunteer"* (`goal_strategy.py:80-85`, de P12). El
+único sitio del sistema que hoy empuja a conseguir la cantidad es la sección **RESUMEN DE
+CONFIRMACIÓN** del prompt (`009:225`: *"…Y el cliente ya haya indicado cuántas bolsas
+quiere"*) — y la migración 013 la borra.
+
+Con H4 decidido, el resultado sin más cambios sería: **la venta se estanca en silencio.**
+Datos completos, backend esperando `grind_preference` para renderizar, LLM con órdenes de no
+preguntarla, y ningún estado que refleje que falta algo. Peor que el bug que venimos a
+arreglar, porque no deja rastro.
+
+**Cierre**: el directive gana un estado previo al resumen. Cuando los 4 slots del DAG y
+`product_id` están completos pero falta `quantity` o `grind_preference`, `next_action` pide
+**uno** de los dos, el que falte primero. La orden de "no preguntar proactivamente" se
+mantiene **solo en la fase pre-producto**, que es donde P12 la puso y donde tiene sentido
+(`if "product_id" in self.missing_fields`, `goal_strategy.py:80`). No se contradice a P12:
+se acota a su fase.
+
+Alternativa descartada: convertirlos en checkpoints del DAG. Cambiaría `progress_pct`, el
+`all_complete` que dispara el auto-escalate y el contrato de `strategy_snapshot`, para
+resolver algo que el directive resuelve con dos líneas.
 
 ---
 
@@ -143,9 +199,9 @@ Módulo nuevo `app/services/order_summary.py`, puro (sin I/O), en la línea de
 `language.py` y `validation.py`. Todo lo que decide se testea sin DB.
 
 ```python
-SUMMARY_REQUIRED = ("product_id", "quantity", "full_name", "phone",
-                    "shipping_city", "shipping_address")
-FINGERPRINT_FIELDS = SUMMARY_REQUIRED + ("grind_preference",)   # + el envío aplicado
+SUMMARY_REQUIRED = ("product_id", "quantity", "grind_preference", "full_name",
+                    "phone", "shipping_city", "shipping_address")
+FINGERPRINT_FIELDS = SUMMARY_REQUIRED           # los siete + el envío aplicado
 
 @dataclass(frozen=True)
 class Shipping:
@@ -183,7 +239,10 @@ turno**; la 2 atrapa la que se persistió en un turno anterior sin que saliera r
 `SummaryState` + `trigger_at` y delega en `order_summary`). Se mantiene pura: el caller
 consulta la DB y le pasa hechos, igual que hoy hace con `current_context`.
 
-Flujo del turno, después del breaker:
+Flujo del turno, después del breaker. **El `SummaryState` se lee UNA vez, al entrar**, y
+las cuatro condiciones se evalúan contra ese estado — nunca contra el resumen que este mismo
+turno pueda estar escribiendo, o la condición 1 se auto-concedería (el mismo vicio del
+08-19, ahora del lado del backend):
 
 1. `merged = {**prior, **accepted}`
 2. Resolver precio (`_fetch_product_price`) y envío (`resolve_shipping`).
@@ -236,15 +295,22 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS order_summary_sent_at TIMESTA
 ```
 
 **2. `business_rules.shipping_rules`** — reemplazo completo. Manizales `5000` fijo;
-Medellín, Envigado, Sabaneta `15000` fijo; el resto `to_confirm`. Se elimina el bloque
-`zones` entero y se añade `pickup: false`.
+Medellín, Envigado, Sabaneta `15000` fijo. **Todo lo demás sale**: Pereira, Armenia, Bogotá,
+Cali, Bucaramanga, Barranquilla, Cartagena y Santa Marta pierden su tarifa, y el bloque
+`zones` entero se elimina. Esas ciudades pasan a `to_confirm` y el operador coordina el
+valor a mano. Se añade `pickup: false`.
+
+Decidido así a propósito: eran cifras de abril (`005:27-52`) que nunca se contrastaron
+contra un envío real, y sostenerlas es inventar tarifas. El resumen dice explícitamente que
+el envío se confirma, en vez de prometer un número.
 
 **3. `system_prompt_template`** — cirugía sobre el template vivo (patrón de la 011,
 idempotente con guard `LIKE`):
 - Borrar la sección **PESO Y CANTIDAD** (`009:142-145`) y sustituirla por la regla dura:
   se vende en bolsas de 340g, no se hacen conversiones ni se ofrecen.
 - Borrar **RESUMEN DE CONFIRMACIÓN** completa, con su ejemplo y su total (`009:224-244`),
-  y **NO DUPLIQUES EL RESUMEN**.
+  y **NO DUPLIQUES EL RESUMEN**. Ojo: ahí vive la única instrucción del sistema que hoy
+  empuja a conseguir la cantidad — su relevo es el directive (H5), no otra línea de prompt.
 - Ajustar **FLUJO DE COMPRA** paso 3 ("Presentas el resumen" → el resumen lo envía el
   sistema).
 - Dejar intacta la línea de `user_confirmation` en EXTRACCIÓN DE DATOS: §5 conserva la
@@ -272,6 +338,10 @@ debe anunciarse al negocio antes de aplicar, no descubrirse en una conversación
   ya envió.
 - `goal_strategy.py:64-68` — la rama `all_complete` sugiere "confirm with the customer and
   close politely". Revisar que no reintroduzca el resumen.
+- `goal_strategy.py:80-85` + `_action_text` — **el cierre de H5**: acotar la orden de "no
+  preguntar proactivamente" a la fase pre-producto (donde ya está condicionada) y añadir el
+  estado previo al resumen que pide `quantity` o `grind_preference` cuando son lo único que
+  falta. Sin esto, H4 estanca la venta en silencio.
 - `prompt_context.py:44-75` — el bloque de envíos empieza con *"all values are approximate,
   pending carrier confirmation"* y escribe `aprox.` en cada ciudad. §3 dice "sin aprox" para
   las fijas. Reescribir con la forma nueva (`fixed` vs `to_confirm`) y añadir la línea de
@@ -322,8 +392,8 @@ longitud del template, como la 011 y la 012) y desplegar.
 3. `normalize_city`: `"medellin"`, `"Medellín"`, `"MEDELLIN"`, `" Medellín "` → $15.000.
    Ciudad desconocida → `to_confirm`.
 4. Total: con envío fijo incluye el envío; con `to_confirm` **no hay total en el texto**.
-5. Render: sin `product_id` no hay resumen (H6); sin guion largo; es/en; sin molienda la
-   cláusula desaparece; formato `$80.000`.
+5. Render: sin `product_id` no hay resumen (H6); **sin `grind_preference` tampoco** (H4);
+   sin guion largo; es/en; formato `$80.000`.
 6. Idempotencia: mismo fingerprint → `should_render_summary` es False.
 
 `tests/services/test_agent_action.py` (ampliar):
@@ -338,6 +408,12 @@ longitud del template, como la 011 y la 012) y desplegar.
 10. `_USER_CONFIRMATION_REQUIRES` **no** incluye `product_id` (H6 se resuelve
     estructuralmente, no por parche).
 
+`tests/services/test_goal_strategy.py` (ampliar):
+
+11. **H5**: con los 4 slots + `product_id` completos y `quantity` o `grind_preference`
+    ausentes, el directive los pide. Y la orden de "no preguntar proactivamente" sigue
+    apareciendo en la fase pre-producto (no-regresión de P12).
+
 ---
 
 ## Riesgos
@@ -346,7 +422,8 @@ longitud del template, como la 011 y la 012) y desplegar.
 |---|---|
 | Falso negativo por desfase de relojes (H2) | Side_effect propio por esa razón; se mide antes de tocar nada |
 | El resumen renderizado suena robótico en el momento más importante | El ADR lo anticipa: ajustar plantilla, nunca devolverle la redacción al LLM |
-| Ciudades que pierden tarifa cotizada | Anunciar al negocio antes de aplicar la 013 |
+| Ciudades que pierden tarifa cotizada (decidido) | Cambio visible para el cliente: avisar al negocio antes de aplicar la 013 |
+| H5 sin cerrar → venta estancada sin rastro | El directive pide `quantity`/`grind_preference`; test 11 lo cubre |
 | El LLM redacta su propio resumen en turnos sin render | Se corta en la sección 3 de la 013 (quitar RESUMEN DE CONFIRMACIÓN del prompt) |
 | n8n manda `send_image_url` en el mismo turno del resumen | El backend no gestiona esa clave (la lee n8n del LLM). Iría foto + resumen juntos. Cosmético; registrar si se ve |
 | Migración manual mal aplicada | Patrón 011/012: transacción única con verificación en el mismo `psql` |
@@ -361,6 +438,8 @@ longitud del template, como la 011 y la 012) y desplegar.
       encabezado `-- Applied:`.
 - [ ] Verificado en una conversación real: resumen del backend con total correcto,
       confirmación aceptada solo después, y una corrección que invalida y re-resume.
+- [ ] Verificado que el bot pide la molienda y la cantidad cuando son lo único que falta
+      (H5): una venta que se estanca ahí es el modo de fallo nuevo que introduce este cambio.
 - [ ] ADR-010 pasa de **Propuesto** a **Aceptado**.
 - [ ] Referencia colgada del ROADMAP al "ADR-010 de P10" resuelta.
 - [ ] CLAUDE.md actualizado; P15 cerrado en el ROADMAP.
