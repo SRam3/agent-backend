@@ -52,8 +52,14 @@ resumen vive únicamente como texto libre dentro de un `response_text` que el LL
 ## Decisión
 
 **El backend es dueño de los datos operacionales que salen al cliente.** Concretamente,
-cinco decisiones que comparten una tesis: el LLM conserva la conversación; pierde la
+seis decisiones que comparten una tesis: el LLM conserva la conversación; pierde la
 aritmética y la declaración de hechos de negocio.
+
+> **Alcance del cambio: 100% backend + una migración.** Este ADR NO toca n8n. Esa
+> propiedad es deliberada: el fix del 80% de falsos positivos no debe arrastrar una sesión
+> sobre el workflow vivo, que es la pieza más frágil del sistema (deuda #12, sin manejo de
+> errores). Lo que exigía tocar n8n (mensaje propio del backend al escalar, que chocaba con
+> el corte de ADR-009 §3) salió del alcance.
 
 ### 1. El backend renderiza y envía el resumen del pedido
 
@@ -81,7 +87,7 @@ y un error ahí es un precio equivocado prometido a un cliente.
 
 Viven en `business_rules.shipping_rules` (JSONB — es edición de datos, no migración):
 - **Manizales: $5.000 fijo.** Sin "aprox".
-- **Medellin, Envigado, Bello, Itagüi, Sabaneta: $15.000 fijo.** 
+- **Medellin, Envigado, Sabaneta: $15.000 fijo.** Sin "aprox".
 - **Resto de ciudades: por confirmar.** El resumen lo dice explícitamente ("el envío a
   Bogotá lo confirmamos contigo y te aviso el valor") y el operador lo coordina a mano.
 - **No hay recogida en la finca.** Regla nueva; hoy el LLM improvisa si se lo preguntan.
@@ -90,20 +96,19 @@ Viven en `business_rules.shipping_rules` (JSONB — es edición de datos, no mig
 > coordinando envíos a mano; cuando haya volumen suficiente, se decide si merece tabla
 > propia. Automatizar antes de tener los datos sería inventar tarifas.
 
-### 4. Reglas de presentación, y escalamiento por encargo
+### 4. Reglas de presentación (sin escalamiento)
 
 - **Bolsa de 340g** es la única presentación que el bot vende.
 - **Libras, media libra, kilos sueltos: NO existen.** El bot informa que se vende en bolsas
-  de 340g y **no hace conversiones** — ni ofrece calcularlas. Esto **elimina** la regla
-  larga del prompt actual sobre equivalencias, que el modelo obedecía a medias.
-- **Cuarterón (2.5 kg): existe, pero solo por encargo.** Cuando un cliente lo pide, el
-  backend **escala a `human_handoff`** con un mensaje corto propio ("el cuarterón lo
-  manejamos por encargo, alguien del equipo te escribe para coordinarlo") y el bot se
-  calla. Reusa el mecanismo existente: estado `human_handoff` + aviso Telegram + corte de
-  n8n (ADR-009 §3, ya verificado). Solo añade un tercer disparador de escalamiento.
+  de 340g y **no hace conversiones**, ni ofrece calcularlas. Esto **elimina** la regla larga
+  del prompt actual sobre equivalencias, que el modelo obedecía a medias.
+- Si el cliente pide una presentación que no existe, el bot lo dice y sigue. **Sin
+  detección especial, sin escalamiento, sin tocar n8n.**
 
-Nota de producto: un cuarterón son ~7,5 bolsas. Es una venta mayor que el pedido típico —
-se escala para atenderla bien, no para rechazarla.
+> Los pedidos por encargo o volumen (cuarterón de 2.5 kg, cantidades altas) quedan **fuera
+> de este ADR**: no hay evidencia de que sean una necesidad recurrente del negocio, y
+> construir detección + escalamiento para un caso no validado es trabajo que después se
+> borra. Registrado como frente futuro, no como decisión. Ver "Fuera de alcance".
 
 ### 5. La confirmación: el LLM juzga el lenguaje, el backend juzga el contexto
 
@@ -206,6 +211,8 @@ aporta valor. La decisión es acotar *cuándo* su juicio puede aceptarse, no ree
   adherencia al resto, alineado con P21).
 - Tercera aplicación consistente de la misma tesis (tras `payment_confirmation` y la
   detección de idioma): los hechos y cálculos de negocio los gobierna el backend.
+- **Cero cambios en n8n.** El fix entra sin abrir una sesión sobre el workflow vivo, que es
+  donde está el mayor riesgo operativo del sistema.
 
 **Negativas / costos**
 - Migración nueva (dos columnas) + lógica de fingerprint e invalidación.
@@ -218,6 +225,17 @@ aporta valor. La decisión es acotar *cuándo* su juicio puede aceptarse, no ree
 
 ## Fuera de alcance
 
+- **Pedidos por encargo / volumen** (cuarterón de 2.5 kg, cantidades altas). Descartado
+  conscientemente: el negocio **no ha validado** que sea una necesidad recurrente, y no hay
+  ningún caso en el histórico. Construir detección y escalamiento para un caso no observado
+  es trabajo que después se borra. Además arrastraba la única parte que exigía tocar n8n.
+  Cuando llegue el primer cliente que pida volumen y se atienda a mano, ahí habrá evidencia
+  y un umbral real. **Recomendación registrada para cuando se abra**: disparar por
+  `quantity` anormalmente alta (campo que el backend ya tiene y valida) en vez de por
+  keywords de producto: es determinista, cubre parafraseos ("para mi cafetería", "para un
+  evento" terminan todos en un número) y no añade claves al prompt ni a la allowlist de n8n.
+  El comportamiento sería silencio + `human_handoff` + aviso Telegram, que ya existe y está
+  verificado; sin mensaje propio del backend, para no chocar con el corte de ADR-009 §3.
 - **Canal de entrada de datos del operador**: hoy el operador solo tiene una acción binaria
   (botón de pago). No puede aportar un dato (p. ej. el valor real del envío a Bogotá). Se
   coordina a mano. Registrar como necesidad futura.
