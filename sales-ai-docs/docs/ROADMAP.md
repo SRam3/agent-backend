@@ -15,7 +15,9 @@
 > sección "Orden sugerido de cierre". Esto aplica en particular a lo que vino de
 > `docs/north-star.md`, que sigue siendo contexto de dirección de solo lectura.
 >
-> Última actualización: 2026-08-19 (análisis de la venta real BSUID — ver
+> Última actualización: 2026-08-29 (comprobante ciego y dirección perdida del miércoles 08-26 — ver
+> `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`).
+> Anterior: 2026-08-19 (análisis de la venta real BSUID — ver
 > `docs/postmortems/analisis-2026-08-19-venta-bsuid-colision-operador.md`)
 
 ---
@@ -44,7 +46,7 @@ el mismo objeto y fue justo lo que hizo perder la pista de qué estaba hecho y q
 - **`P` mayúscula** en prosa y en nombres de archivo. Las ramas git van en minúscula
   (`feat/p14-lid-privacidad`) como excepción deliberada: es convención git y no genera
   ambigüedad.
-- Frentes nuevos toman el siguiente número libre — hoy, **P28**.
+- Frentes nuevos toman el siguiente número libre — hoy, **P31**.
 - **Un frente sin número P no existe.** `purchase_intents` estuvo citado como pendiente en
   cuatro ADRs y en `CLAUDE.md` durante meses sin número propio, y por eso nunca entró en
   ninguna priorización. Hoy es P24. Si algo aparece dos veces en prosa, dale un número.
@@ -218,6 +220,14 @@ persistencia, y qué llega al pipeline conversacional. Dato duro nuevo para ese 
 en `hash`. Cualquier diseño que guarde la URL en vez del binario guarda un enlace muerto.
 También pendiente: el `caption` de imagen, que hoy no se extrae y por eso una imagen con
 caption cae en "sin contenido" como todas.
+**El frente no es solo "responder a ciegas": es CONTRADECIR (2026-08-26).** Con el guard puesto,
+el bot ya no contesta a un medio ilegible — pero sigue sin verlo, así que opera sobre un diálogo
+al que le falta lo esencial. Caso real: un cliente envió el comprobante de pago a las 17:37:27 y
+**64 segundos después el bot le pidió el comprobante** ("Cuando realices el pago, no olvides
+enviarme el comprobante"), disparado por un "Excelente!!!" posterior del propio cliente. El guard
+funcionó (exec 11150: `reason: unreadable_content`, 177 ms, sin salida) y aun así el cliente vio
+al bot desconocer su pago. **Silenciar el turno no evita este daño; solo bajar los bytes lo evita.**
+Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
 **Dentro del alcance al abrir: revisar el umbral del circuit breaker.** Cerrar P16 hace que
 una imagen legible vuelva a generar turno, así que **restaura implícitamente la sensibilidad
 del breaker** que el guard de contenido ilegible redujo (ver la nota de calibración en P8).
@@ -259,12 +269,38 @@ ENTRE la promesa del operador ("ya te comparto la llave") y la llave real. Testi
 operador: "no entré a confirmar rápidamente, me quedé atendiendo porque vi el bot muy
 perdido" — cuando el bot falla, el humano va al chat, no a Telegram; el lazo de ADR-009
 asume lo contrario.
+**Segunda ocurrencia real (2026-08-26), con el mecanismo ya identificado**: cerrar la venta
+**reinicia** al bot en vez de silenciarlo. El operador pulsó el botón a las 17:38:38 (`sale_closed`,
+conv `ba58a211`); el cliente escribió "Jajajaa sisas" a las 17:41:12 y, como la conversación estaba
+`closed`, el ingest **creó otra desde cero** (`5fcca6eb`, v1, sin historial) y el bot se presentó de
+nuevo: "¿Cómo vas, Juan? ¿En qué te puedo ayudar hoy?" — a un cliente que acababa de comprar y
+mientras el operador atendía a mano. Idéntico al 2026-08-19 con otra clienta: once días, dos ventas,
+mismo comportamiento. El guard de contenido ilegible no aplica aquí ni podría (el disparador es texto
+legible). Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
 **Toca la consecuencia aceptada de ADR-009** ("el bot acompaña en active hasta el botón") y
 es insumo directo de la decisión P23 (estados de espera explícitos). Opciones a evaluar al
 abrir: endpoint operador → pausa (`active → human_handoff` manual), detección de mensajes
 del operador vía Chakra (¿webhookea echoes?), o botón "tomo la conversación" en el aviso
 Telegram. Deuda observable: #14.
 Riesgo: [ADR] (toca ADR-009/P23) + [B] + [N8N].
+
+### P30 · Sin validación de dirección de envío (registrado 2026-08-26, NO abierto)
+**Qué**: `services/validation.py` son 32 líneas con **una sola función**, `is_plausible_phone`
+(ADR-008). No existe ninguna validación de `shipping_address`. En `agent_action.py` el campo aparece
+solo en `STRATEGY_FIELDS` y en `_USER_CONFIRMATION_REQUIRES`: el gate exige que **esté presente**,
+nunca que sea válido.
+**Evidencia**: 2026-08-26 21:55:51, una clienta envió `calle46a58e37` — sin separadores, indespachable.
+En ese caso concreto no llegó a persistirse porque el LLM ni siquiera la extrajo (ese es el problema
+hermano, ver P12), pero de haberlo hecho se habría guardado tal cual y habría contado para
+`user_confirmation`: la venta habría quedado lista para cerrar con una dirección a la que nadie puede
+despachar.
+**Por qué importa**: la dirección es el único dato del DAG cuyo error no se detecta hasta el despacho,
+cuando ya se cobró. El teléfono tiene gate desde ADR-008; la dirección no tiene nada.
+**Alcance a decidir al abrir**: qué significa "válida" para una dirección colombiana (¿forma?,
+¿normalización?, ¿geocoding contra un proveedor?, ¿solo pedir confirmación al cliente?). Ojo con
+repetir el error del gate de teléfono: valida FORMA, no veracidad, y eso se decidió a conciencia.
+Probablemente basta empezar por normalizar y devolver el resumen para confirmación explícita.
+Riesgo: [B] acotado si es solo forma; [ADR] si entra un proveedor externo.
 
 ---
 
@@ -568,6 +604,15 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
 - **ADR-009 · Lazo de handoff** (endpoint confirm-payment + auth escopada + Telegram +
   corte de respuesta n8n + registro de venta + cierre a closed). Probado e2e.
 - **P12 · Slot perdido / captura de ORDER_FIELDS** en el directive (oportunista, no bloqueante).
+  **Nota de alcance (2026-08-26, dato — la familia sigue viva fuera de lo que P12 cubrió)**: P12
+  arregló la captura oportunista de los `ORDER_FIELDS` (`quantity`, `grind_preference`) en fase
+  pre-producto, pero el mismo descarte ocurre con campos del **DAG** ofrecidos fuera de orden. Caso
+  real: una clienta escribió su dirección a las 21:55:51 y el LLM devolvió
+  `extracted_data = {"grind_preference": "grano"}` — **`shipping_address` nunca se extrajo**, así que
+  no llegó a ningún gate y no está en `extracted_context`. El bot le pidió primero la ciudad y tiró el
+  dato; cuando el flujo llegue a la dirección volverá a pedírsela, justo lo que el prompt prohíbe
+  ("nunca se lo vuelvas a pedir"). Ver P30 y
+  `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
 - **Infra · minReplicas 0→1** (eliminó cold starts que perdían mensajes).
 - **P1 · Drift de docs** (CLAUDE.md, n8n CLAUDE.md sincronizados con la realidad).
 
@@ -657,6 +702,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P27 | Motor de campañas outbound (remarketing) | 🔵 bloqueado por P24, P26 | — |
 | P28 | Gobierno de datos operativos en el NLG (llave/medios de pago inventados) | 🔴 registrado, no abierto | — |
 | P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🔴 registrado, no abierto | deuda #14 |
+| P30 | Sin validación de dirección de envío | 🟡 registrado, no abierto | — |
 
 **Siguiente número libre: P30.**
 
