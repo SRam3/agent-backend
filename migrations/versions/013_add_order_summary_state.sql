@@ -30,8 +30,8 @@
 --          columnas; las dos nuevas existen y son nullable; 55 conversaciones vivas, 0 con
 --          fingerprint, como corresponde a una migración puramente aditiva. Aplicada ANTES
 --          del despliegue, según el campo `Orden` de arriba y ADR-012: el código entonces
---          corriendo (revisión ca-backend--0000057, imagen caabe89) no declara estas
---          columnas y simplemente las ignora.
+--          corriendo (la revisión desplegada el 2026-08-23) no declara estas columnas y
+--          simplemente las ignora.
 
 -- ============================================================
 -- 1. Estado del resumen (DDL)
