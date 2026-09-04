@@ -39,7 +39,7 @@ tercio, concentrado en dos costuras.
 | Retraso de entrega, imagen / audio (mediana) | **7,9 s / 8,2 s** |
 | Diferencia media−texto | **≈ 4,4 s** |
 | Cota superior del adelanto del reloj de Meta | **≤ 0,2 s** |
-| Entregas tardías extremas | **20, 22 y 80 minutos** (conv `4b5ba0ec`, 06-12) |
+| Entregas tardías extremas | **20, 22 y 80 minutos**, todas el 06-12 |
 | Vida útil de la URL firmada de medios | **301–302 s** desde el timestamp |
 
 La cota de 0,2 s no es una medida limpia: el `asyncio.sleep(5)` no es exacto y el timestamp está
@@ -87,7 +87,7 @@ registrada en falso.
 
 El lookahead del debounce (`services/ingest.py`) busca `Message.created_at > msg_timestamp`. Con el
 timestamp pisado al segundo, **dos mensajes del mismo segundo no se ven entre sí**: ocurrió el
-2026-07-18 (conv `d6349fa0`) y produjo tres respuestas. Pasa a comparar `>=` excluyendo el propio
+2026-07-18 y produjo tres respuestas. Pasa a comparar `>=` excluyendo el propio
 mensaje por `id`. Es una línea, con su test, y no espera al rediseño de P7.
 
 ## Alternativas consideradas

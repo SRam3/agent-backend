@@ -211,12 +211,12 @@ las dos ventas que el botón cerró con cliente real, ese mensaje no fue una pr�
 conversación continuando, con el operador escribiendo por WhatsApp en ese mismo minuto.
 
 - **2026-08-19 22:15 UTC**: tras el `sale_closed` de las 21:40, la clienta manda una nota de voz; el
-  ingest abre `d7c70f32` en `v1` y el bot suelta un saludo genérico mientras el dueño cierra la
-  logística a mano. (Hoy el guard de contenido ilegible suprimiría ese turno.)
+  ingest abre una conversación nueva en `v1` y el bot suelta un saludo genérico mientras el dueño
+  cierra la logística a mano. (Hoy el guard de contenido ilegible suprimiría ese turno.)
 - **2026-08-26 17:41 UTC**: `sale_closed` a las 17:38:38; el operador escribe entre 17:38:09 y
-  17:40:01 (cuatro echoes descartados en n8n); el cliente responde «Jajajaa sisas» a las 17:41:12 y el
-  bot le contesta a las 17:41:22 desde `5fcca6eb`, en `v1`, sin historial. **Ese caso sigue vivo**: el
-  disparador es texto perfectamente legible.
+  17:40:01 (cuatro echoes descartados en n8n); el cliente responde con un mensaje corto a las
+  17:41:12 y el bot le contesta a las 17:41:22 desde una conversación nueva, en `v1`, sin historial.
+  **Ese caso sigue vivo**: el disparador es texto perfectamente legible.
 
 El hueco no es de identidad — el seed desde `profile` funciona y el bot usa el nombre del cliente —
 sino que **no existe forma de callarlo** en la ventana posterior al cierre, que es justo cuando el

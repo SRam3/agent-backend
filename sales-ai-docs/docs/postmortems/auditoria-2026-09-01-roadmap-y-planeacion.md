@@ -11,6 +11,13 @@ y `GET /api/v1/executions`; contra Azure solo `az containerapp show`, `az contai
 `az keyvault secret show`. Cero escrituras, cero cambios en workflows, cero despliegues, cero ediciones
 del repo durante la auditoría. Este documento es el único artefacto que produce.
 
+**Convención de anonimización**: este documento no contiene material de clave, nombres de recursos
+de infraestructura, identificadores de plataforma (workflows de n8n, `phone_number_id` de Meta) ni
+UUID de conversaciones o de `client_users`. Donde hacía falta señalar un caso concreto se usa su
+fecha, que con este volumen lo identifica igual de bien. Sí se conservan los números de ejecución de
+n8n, los timestamps y las referencias `archivo:línea`: son la moneda de evidencia del repo, no
+sirven fuera de él, y las ejecuciones además expiran solas con la retención.
+
 **Convención de evidencia**: `[DB]` = confirmado con SELECT contra la Postgres viva; `exec NNNN` =
 ejecución de n8n leída por API; `[n8n]` = leído de la definición viva del workflow; `[az]` = leído de
 Azure; `archivo:línea` = verificado en el repo. Timestamps en UTC. PII enmascarada.
@@ -59,8 +66,8 @@ consigo mismo en el mismo archivo.
 
 | Pieza | Estado verificado |
 |---|---|
-| `ca-backend` | revisión `0000057`, imagen `sebra3/sales-agent-api:caabe894…`, `minReplicas: 1` `[az]` |
-| Código desplegado | `caabe89` = PR #64; **incluye** el guard de contenido ilegible y el fix de deuda #13 |
+| Container App del backend | revisión creada el 2026-08-23, `minReplicas: 1` `[az]` |
+| Código desplegado | el de PR #64; **incluye** el guard de contenido ilegible y el fix de deuda #13 |
 | Postgres | 16.14, `TimeZone = UTC`, 6 tablas, **sin** tabla de versiones de migración `[DB]` |
 | Prompt vivo | `len 17261`, `md5 3e14d875b0dabeb864dd6fc689440753`, `updated_at 2026-07-31` = migración 011 `[DB]` |
 | Migración 013 | **NO aplicada**: `conversations` tiene 16 columnas, sin `order_summary_*` `[DB]` |
@@ -84,24 +91,24 @@ editó ni con qué intención. No determinable por la API sin el token MCP de in
 
 ```
 2026-08-30T21:53:34.869Z  ERROR app.services.conversation_summary
-summarize_conversation: LLM call FAILED for 420b5d3b… (failure #3 this process)
+summarize_conversation: LLM call FAILED for <conversation_id> (failure #3 this process)
 — AuthenticationError: Error code: 401 - {'error': {'message':
 'Incorrect API key provided: <redactado>', 'code': 'invalid_api_key'}}
 ```
-`[az containerapp logs show -n ca-backend -g rg-backend --type console]`, stack en
+`[az]` log de consola del Container App del backend, stack en
 `conversation_summary.py:220` → `:163`.
 
 Es la **candidata 2** del `diagnostico-2026-06-14-P4-compaction.md` («auth inválida — la key carga
 pero está expirada o es de otra org»), que aquel diagnóstico rankeó segunda tras el egress. El
-backend resuelve `OPENAI_API_KEY` del secreto `openai-key` de Key Vault (`main.py:64-78`); la
+backend resuelve `OPENAI_API_KEY` de un secreto de Key Vault al arrancar (`main.py:64-78`); la
 Container App no tiene esa variable en el entorno `[az]`, así que viene del vault. n8n llama a OpenAI
-con **otra** credencial (`admin_key_open_ai`) y por eso el bot conversa mientras la memoria muere.
+con **otra** credencial y por eso el bot conversa mientras la memoria muere.
 
 Consecuencia en datos, hoy: **0 de 39** `client_users` con `last_conversation_summary`, 29 perfiles
 vacíos `[DB]`. Y consecuencia sobre el plan: parte de la evidencia que hoy sostiene a **P21** y a
 **P24** es de esta clave, no del prompt ni de la falta de `purchase_intents` — el Lodge re-saludado el
-08-19 y el cliente `dd842508` con perfil vacío tras conversaciones el 08-28 y el 08-30 son casos de
-esto. **Rotar el secreto es la corrección de mayor efecto y menor riesgo del inventario completo.**
+08-19 y el cliente que volvió a escribir el 08-28 y el 08-30, con el perfil todavía vacío, son casos
+de esto. **Rotar el secreto es la corrección de mayor efecto y menor riesgo del inventario completo.**
 
 ### 2.2 ADR-010 / migración 013 — el orden de despliegue no está resuelto y rompe prod
 
@@ -163,12 +170,12 @@ ejecuciones `success`, ya corregidos por deuda #13.
 (`purchase_count: 2`)». Ese UPDATE se hizo:
 
 ```
-2026-07-31 20:31:19.716909+00  profile_corrected  operator  15d89710
+2026-07-31 20:31:19.716909+00  profile_corrected  operator  <client_user>
 {"reason":"duplicate_sale_cleanup","purchase_count_before":2,"purchase_count_after":1,
  "removed_by_path":"legacy_llm_payment_confirmation","fix":"PR #57"}  [DB]
 ```
 
-El `purchase_count: 2` que hoy tiene `15d89710` son **dos compras distintas y legítimas** (07-20 y
+El `purchase_count: 2` que hoy tiene ese `client_user` son **dos compras distintas y legítimas** (07-20 y
 08-01), no el duplicado. No hay filas en estado inconsistente: las 4 conversaciones con
 `payment_confirmation` están las 4 en `closed` `[DB]`. **P18 y P19 se cierran sin implementar nada.**
 
@@ -196,7 +203,7 @@ Medición completa, no cota `[DB]`:
 
 Pero **39 de los 58 no son medios** (`unsupported`, `reaction`, `revoke`, `edit`) y ya están
 resueltos por el guard. Los medios son 19 mensajes (5,3 %), y **7 de las 14 imágenes pertenecen a un
-solo episodio bot-a-bot** (conv `e59e6100`, 08-15). El material real de clientes en cinco meses es del
+solo episodio bot-a-bot** (el del 08-15). El material real de clientes en cinco meses es del
 orden de una docena de mensajes, sobre un catálogo de **un** producto. Ninguna de las tres imágenes
 retenidas trae `caption` `[n8n]`. «Bajar los bytes» no está dimensionado como el 15,6 % que dice la
 entrada.
@@ -215,8 +222,8 @@ Lo que sí queda es un caso distinto y de una línea, ver §5.
 ### 2.10 P10 — la amenaza ya se materializó dos veces, y el breaker bastó las dos
 
 `ROADMAP.md:661` dice «cuando la amenaza se materialice». Ocurrió el 2026-07-18 (bot de vuelos) y el
-2026-08-15 (bot de soporte de telecomunicaciones, conv `e59e6100`): 28 inbound en 4 minutos, 16
-outbound, breaker disparado a las 14:06:28 `[DB]`. De esos 28 inbound, **23 eran ilegibles** (16
+2026-08-15 (bot de soporte de telecomunicaciones): 28 inbound en 4 minutos, 16 outbound, breaker
+disparado a las 14:06:28 `[DB]`. De esos 28 inbound, **23 eran ilegibles** (16
 `unsupported`, 7 `image`): con el guard vivo desde el 08-23, ese episodio produciría 5 turnos en vez
 de 28. El guard desactivó la mayor parte del caso observado de P10 sin proponérselo.
 
@@ -231,10 +238,9 @@ diseño para P16, no un fallo ocurrido.
 ### 2.12 La base de evidencia de ventas es más pequeña de lo que sugieren los documentos
 
 Hay 4 conversaciones con `payment_confirmation`, en 3 `client_users` `[DB]`. **Dos de las cuatro**
-(07-20 y 08-01) son del mismo `client_user` `15d89710`, que acumula 10 conversaciones, aparece en los
-e2e y cuyo interlocutor el bot llama «Sebastián». Si esa es la identidad del dueño, las ventas a
-clientes externos son **dos**: 08-19 (`90aa2b87`) y 08-26 (`ba58a211`). **No determinable desde los
-datos**; lo confirma o lo desmiente el dueño. Importa porque varios frentes se priorizan citando «la
+(07-20 y 08-01) son del mismo `client_user`, que acumula 10 conversaciones, aparece en los e2e y
+cuyo interlocutor el bot llama por el nombre del dueño. Si esa es su identidad, las ventas a clientes
+externos son **dos**: la del 08-19 y la del 08-26. **No determinable desde los datos**; lo confirma o lo desmiente el dueño. Importa porque varios frentes se priorizan citando «la
 venta real del 08-01».
 
 ---
@@ -274,11 +280,11 @@ Los echoes del operador **sí llegan** al webhook y mueren en `If Message Exists
 | 2026-08-29 | 1 | 23:05:37 |
 | **2026-08-30** | **2** | **22:24:50 y 22:48:28** |
 
-La secuencia del 08-30, conversación `d5c070c9` (cliente `dd842508`) `[DB + n8n]`:
+La secuencia del 08-30 `[DB + n8n]`:
 
 ```
 22:24:50  🧑 operador escribe (echo, 38 chars)        exec 11506 → Stop
-22:27:06  cliente responde "solo tienen honey o…"     [DB]
+22:27:06  cliente responde una pregunta de producto   [DB]
 22:27:17  🤖 el bot contesta                          exec 11511 · agent_turn
 22:48:28  🧑 operador escribe otra vez (72 chars)     exec 11518 → Stop
 ```
@@ -293,14 +299,14 @@ ocurrencia el 08-26; son **tres**, y el patrón es que el operador atiende a man
 `ROADMAP.md:272-282` registra dos ocurrencias. Con el guard vivo, **solo una sigue siendo
 alcanzable**:
 
-- **08-19 22:15**, conv `d7c70f32`: el disparador fue un **audio** (`content=''`). Hoy el guard lo
+- **08-19 22:15**: el disparador fue un **audio** (`content=''`). Hoy el guard lo
   suprime — verificado con el `revoke` del 08-29 (exec 11435: `should_respond: false`,
   `reason: unreadable_content`, 0,12 s, sin llamada al LLM) `[n8n]`. **Ya no puede ocurrir así.**
-- **08-26 17:41**, conv `5fcca6eb`: el disparador fue «Jajajaa sisas», texto legible. El guard no
+- **08-26 17:41**: el disparador fue un mensaje corto de texto perfectamente legible. El guard no
   aplica ni podría. **Sigue vivo.**
 
-Y una precisión sobre el síntoma: el bot **no** se re-presentó el 08-26. Dijo «¿Cómo vas, Juan? ¿En
-qué te puedo ayudar hoy?» — usó el nombre, porque el seed desde el `profile` funciona. Lo que falta no
+Y una precisión sobre el síntoma: el bot **no** se re-presentó el 08-26. Saludó usando el nombre de
+pila del cliente y ofreciendo ayuda, porque el seed desde el `profile` funciona. Lo que falta no
 es la identidad: es la **memoria de la venta que acaba de cerrarse** (deuda #7, §2.1) y un mecanismo
 para callarse mientras el operador atiende. El mérito de la corrección: silenciar al bot en la ventana
 posterior a `sale_closed` es un cambio de backend acotado, y ataca el momento exacto en que el
@@ -332,16 +338,16 @@ guard de uno suprimido por debounce ni de uno perdido por un 500.
 
 ### 4.6 La instancia de n8n es compartida, y el filtro por error no sirve como alerta
 
-`Predicción horaria → Telegram` (`cpQs5t6aQw5022Lk`) falla **siete veces al día desde al menos el
+Un workflow ajeno al producto, en la misma instancia, falla **siete veces al día desde al menos el
 08-19** — 70 ejecuciones en error en la retención, y son **todas** las ejecuciones en error de la
-instancia `[n8n]`. `Liquidación de señales` tiene tantas ejecuciones como el pipeline de ventas. Dos
+instancia `[n8n]`. Otro workflow ajeno tiene tantas ejecuciones como el pipeline de ventas. Dos
 consecuencias: cualquier alerta basada en `status=error` nace ahogada en ruido ajeno, y la réplica
 única (`minReplicas = maxReplicas = 1`, correcta por el postmortem del 07-21) comparte CPU con
 automatizaciones que no son del producto.
 
 ### 4.7 `max_natural` es un segundo tenant enrutado por `master`, sin P14 y con arquitectura opuesta
 
-El `Switch` del `master` enruta `phone_number_id = 420972257763953` a `max_natural`, activo, 15 nodos
+El `Switch` del `master` enruta el `phone_number_id` del segundo tenant a `max_natural`, activo, 15 nodos
 `[n8n]`. Su `Set` whitelist copia **cuatro** campos y ninguno de identidad de P14: un cliente suyo con
 privacidad de número se descarta hoy en silencio, exactamente la exec 9459 que originó P14. Y el
 workflow es un **AI Agent con tools** (`agent`, `toolCalculator`, dos `dataTableTool`), que es
@@ -372,8 +378,8 @@ post-venta ni el scale-to-zero. Es aproximadamente un tercio, concentrado en dos
 | Retraso de entrega, imagen / audio (mediana) | **7,9 s / 8,2 s** | `[DB]`, n=6 y n=3 |
 | Diferencia media media−texto | **≈ 4,4 s** | derivada |
 | Cota del adelanto del reloj de Meta | **≤ 0,2 s** (mínimo observado 4,80 s sobre un sleep de 5 s) | `[DB]`, n=323 |
-| Entregas tardías extremas | **20, 22 y 80 minutos** (conv `4b5ba0ec`, 06-12) | `[DB]` |
-| Pares de inbound en el mismo segundo | **1**, con 3 respuestas (conv `d6349fa0`, 07-18) | `[DB]` |
+| Entregas tardías extremas | **20, 22 y 80 minutos**, todas el 06-12 | `[DB]` |
+| Pares de inbound en el mismo segundo | **1**, con 3 respuestas, el 07-18 | `[DB]` |
 | Vida útil de la URL firmada | **301–302 s** desde el `timestamp` | diagnóstico 08-22 §3.2 |
 
 La cota de 0,2 s no es una medida limpia: el `sleep(5)` no es exacto y el timestamp está pisado al
@@ -506,7 +512,7 @@ pendiente.
 
 ### 10.2 Orden propuesto
 
-1. **Rotar `openai-key`** y verificar con el próximo cliente recurrente. Cierra la causa raíz de P4 y
+1. **Rotar el secreto de OpenAI** y verificar con el próximo cliente recurrente. Cierra la causa raíz de P4 y
    la deuda #7. Cero código, y es la promesa central del producto.
 2. **ADR-010 en tres pasos**: 013 sección 1 → merge y despliegue → 013 secciones 2 y 3 → verificación.
    Antes, confirmar el precio de Manizales. Al mergear: ADR a `Accepted`, índice de ADRs, y resolver
@@ -554,11 +560,11 @@ datos reales de `pending_intent`; **P22** re-alcanzado a tests de integración c
 El siguiente número libre es **P31** (`ROADMAP.md:49`; `:707` lo contradice — ver §1.2).
 
 - **P31 · Silencio post-venta** — 🔴 [B]. El bot contesta a un cliente que acaba de comprar mientras el
-  operador atiende. Evidencia: conv `5fcca6eb` (08-26 17:41:22), con 4 echoes del operador entre
-  17:38 y 17:40. La ocurrencia gemela del 08-19 ya la cubre el guard (§4.2). Toca la consecuencia
+  operador atiende. Evidencia: la conversación nueva del 08-26 17:41:22, con 4 echoes del operador
+  entre 17:38 y 17:40. La ocurrencia gemela del 08-19 ya la cubre el guard (§4.2). Toca la consecuencia
   aceptada de ADR-009 §4 → nota as-built.
 - **P32 · Placeholder de medios en el historial** — 🔴 [B]. Mitad útil de P16, separable de la
-  descarga. Evidencia: conv `ba58a211`, imagen 17:37:27 → el bot pide el comprobante 17:38:31 (§4.3).
+  descarga. Evidencia: el 08-26, imagen 17:37:27 → el bot pide el comprobante 17:38:31 (§4.3).
 - **P33 · Orden migración↔despliegue** — 🔴 [ADR]. Regla escrita más partir la 013 en dos archivos.
   Evidencia: `core.py:193-194` contra `information_schema`, y el trigger del CI (§2.2).
 
@@ -600,11 +606,11 @@ sin `audit_log` (§4.5). La deuda **#7 no necesita número nuevo**: necesita su 
 
 - Quién editó `cafe_arenillo_v2` el 2026-08-29 a las 23:38 UTC y con qué intención: el historial
   nativo de n8n exige un token MCP de instancia que no está configurado.
-- La fecha de última rotación del secreto `openai-key`: la lectura de sus atributos fue denegada en
+- La fecha de última rotación del secreto de OpenAI: la lectura de sus atributos fue denegada en
   esta sesión.
 - Si Chakra reintenta entregas fallidas (pendiente desde el postmortem del 07-21).
 - Si `max_natural` atiende clientes reales.
-- Si `15d89710` es la identidad del dueño (§2.12).
+- Si ese `client_user` recurrente es la identidad del dueño (§2.12).
 
 ### Respuestas recibidas el 2026-09-03, después de entregar esta auditoría
 
@@ -620,10 +626,10 @@ determinable el 09-01.
   favor de la migración: no era un error, es una bajada de precio deliberada sobre la tarifa de
   abril. Anotada en el encabezado de la migración.
 - **La rotación de la clave de OpenAI sí ocurrió, pero no donde el backend la lee.** Los atributos
-  del secreto, que el 09-01 no se pudieron leer, muestran que `openai-key` seguía en su versión de
-  **2025-06-24**; la clave nueva se había creado como secreto aparte,
-  `secret-key-arenillo-open-ai` (2026-09-04 02:04 UTC). Copiada a `openai-key` el 2026-09-04
-  02:04:06 y 02:05:17 UTC (dos versiones con el mismo hash) y verificada contra la API con la
+  del secreto, que el 09-01 no se pudieron leer, muestran que el que lee el backend seguía en su
+  versión de **2025-06-24**; la clave nueva se había creado bajo **otro nombre de secreto**, y por eso
+  el backend no la veía. Copiada al secreto correcto el 2026-09-04 (dos versiones con el mismo hash,
+  02:04:06 y 02:05:17 UTC) y verificada contra la API con la
   petición exacta de la compaction, `json_schema` estricto incluido: HTTP 200. Eso **descarta
   definitivamente la candidata 3** del diagnóstico del 06-14 (modelo o structured output) y, junto
   con el propio 401, la candidata 1 (egress). **Falta que una revisión nueva del Container App la
@@ -639,8 +645,8 @@ determinable el 09-01.
 |---|---|
 | `[DB]` sesión read-only, 2026-09-02 00:11:30 UTC | schema post-012 sin las columnas de la 013; 39/53/673/647; 0/39 compactaciones; 314/314 sin wamid; 58/359 inbound vacíos; `profile_corrected` del 07-31; 4 ventas en 3 usuarios; relojes de §5.1 |
 | `[n8n]` 268 execs de `master` + 268 de `cafe_arenillo_v2` | 17 echoes; 209 `Stop`; 0 en error; 5×500; 0 409; formas de payload; retención real |
-| `[az]` `containerapp logs show -n ca-backend` | el 401 de OpenAI del 2026-08-30T21:53:34.869Z |
-| `[az]` `containerapp show -n ca-backend` | revisión 0000057, imagen `caabe89…`, `minReplicas: 1` |
+| `[az]` log de consola del backend | el 401 de OpenAI del 2026-08-30T21:53:34.869Z |
+| `[az]` config del Container App del backend | revisión del 2026-08-23, `minReplicas: 1` |
 | Repo, rama `feat/adr-010-…` | ADR-010, migración 013, `order_summary.py`, modelo ORM |
 | Repo, `origin/main` | ROADMAP vigente, diagnóstico del 08-29, P30 |
 | Ejecuciones citadas | 10452, 10474, 10487, 10566, 10600, 10612, 10650, 11150, 11153, 11165, 11170, 11174, 11435, 11444, 11506, 11511, 11518 |

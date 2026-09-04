@@ -233,14 +233,14 @@ caption cae en "sin contenido" como todas.
 el bot ya no contesta a un medio ilegible — pero sigue sin verlo, así que opera sobre un diálogo
 al que le falta lo esencial. Caso real: un cliente envió el comprobante de pago a las 17:37:27 y
 **64 segundos después el bot le pidió el comprobante** ("Cuando realices el pago, no olvides
-enviarme el comprobante"), disparado por un "Excelente!!!" posterior del propio cliente. El guard
+enviarme el comprobante"), disparado por un mensaje de agradecimiento posterior del propio cliente. El guard
 funcionó (exec 11150: `reason: unreadable_content`, 177 ms, sin salida) y aun así el cliente vio
 al bot desconocer su pago. **Silenciar el turno no evita este daño; solo bajar los bytes lo evita.**
 Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
 **Re-medición (2026-09-01): el alcance estaba sobredimensionado.** Hoy son 58 de 359 inbound sin
 contenido legible (16,2 %), pero **39 de esos 58 no son medios** (35 `unsupported`, 2 `reaction`, 1
 `revoke`, 1 `edit`) y ya los resuelve el guard. Los medios son 19 mensajes, **5,3 %**, y **7 de las 14
-imágenes pertenecen a un solo episodio bot-a-bot** (conv `e59e6100`, 08-15). El material real de
+imágenes pertenecen a un solo episodio bot-a-bot** (el del 08-15). El material real de
 clientes en cinco meses es del orden de una docena de mensajes, sobre un catálogo de UN producto, y
 ninguna de las imágenes retenidas trae `caption`.
 **Y obliga a tocar el `master`, no solo `cafe_arenillo_v2`**: su `Set` whitelist
@@ -313,10 +313,10 @@ operador: "no entré a confirmar rápidamente, me quedé atendiendo porque vi el
 perdido" — cuando el bot falla, el humano va al chat, no a Telegram; el lazo de ADR-009
 asume lo contrario.
 **Segunda ocurrencia real (2026-08-26), con el mecanismo ya identificado**: cerrar la venta
-**reinicia** al bot en vez de silenciarlo. El operador pulsó el botón a las 17:38:38 (`sale_closed`,
-conv `ba58a211`); el cliente escribió "Jajajaa sisas" a las 17:41:12 y, como la conversación estaba
-`closed`, el ingest **creó otra desde cero** (`5fcca6eb`, v1, sin historial) y el bot se presentó de
-nuevo: "¿Cómo vas, Juan? ¿En qué te puedo ayudar hoy?" — a un cliente que acababa de comprar y
+**reinicia** al bot en vez de silenciarlo. El operador pulsó el botón a las 17:38:38 (`sale_closed`);
+el cliente escribió un mensaje corto a las 17:41:12 y, como la conversación estaba `closed`, el
+ingest **creó otra desde cero** (v1, sin historial) y el bot saludó de nuevo, usando el nombre de
+pila y ofreciendo ayuda — a un cliente que acababa de comprar y
 mientras el operador atendía a mano. Idéntico al 2026-08-19 con otra clienta: once días, dos ventas,
 mismo comportamiento. El guard de contenido ilegible no aplica aquí ni podría (el disparador es texto
 legible). Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
@@ -350,12 +350,12 @@ Riesgo: [B] acotado si es solo forma; [ADR] si entra un proveedor externo.
 conversación NUEVA en `active` que el bot contesta — justo mientras el operador atiende a mano. No es
 que el bot se re-presente (el seed desde `profile` funciona y usa el nombre): es que **no sabe que
 acaba de haber una venta** y no existe forma de callarlo.
-**Evidencia (2026-08-26)**: `sale_closed` de la conv `ba58a211` a las 17:38:38 UTC; el operador escribe
-por WhatsApp entre 17:38:09 y 17:40:01 (4 echoes, execs 11153, 11165, 11170, 11174); el cliente escribe
-"Jajajaa sisas" a las 17:41:12 y el bot le contesta a las 17:41:22 desde la conv nueva `5fcca6eb`, en
-`v1`, sin historial.
+**Evidencia (2026-08-26)**: `sale_closed` a las 17:38:38 UTC; el operador escribe por WhatsApp entre
+17:38:09 y 17:40:01 (4 echoes, execs 11153, 11165, 11170, 11174); el cliente escribe un mensaje corto
+a las 17:41:12 y el bot le contesta a las 17:41:22 desde una conversación nueva, en `v1`, sin
+historial.
 **Corrección al diagnóstico del 08-29**: registró dos ocurrencias, pero **solo una sigue siendo
-alcanzable**. La del 08-19 (conv `d7c70f32`) la disparó un audio con `content` vacío, y hoy el guard de
+alcanzable**. La del 08-19 la disparó un audio con `content` vacío, y hoy el guard de
 contenido ilegible la suprime — verificado con el `revoke` del 08-29 (exec 11435: `should_respond:
 false`, `reason: unreadable_content`, 0,12 s, sin llamada al LLM). La del 08-26 la disparó texto
 legible: el guard no aplica ni podría.
@@ -375,7 +375,7 @@ Riesgo: [B] acotado.
 guard, el bot ya no responde AL medio; sigue **contradiciendo** al cliente que lo mandó.
 **Evidencia (2026-08-26)**: el cliente envía el comprobante de pago a las 17:37:27 y **64 segundos
 después el bot le pide el comprobante** ("Cuando realices el pago, no olvides enviarme el
-comprobante"), disparado por un "Excelente!!!" posterior del propio cliente.
+comprobante"), disparado por un mensaje de agradecimiento posterior del propio cliente.
 **El fix no requiere bajar bytes**: un placeholder por tipo en el historial ("[el cliente envió una
 imagen]", "[el cliente envió una nota de voz]") más una línea de directive cuando el medio llega
 después de `user_confirmed`. Es 100 % backend, no toca el `master`, no toca la ventana de 301 s, y de
@@ -442,8 +442,8 @@ Se le asigna número aquí (ver la regla añadida en "Notación").
 que depende de que la lazy-compaction viva — deuda #7, rota en producción durante meses.
 **Habilitador de producto, no solo deuda**: sin esta tabla no existe el concepto "carrito
 abandonado", y por tanto P27 (campañas) no tiene sobre qué disparar. Es precondición dura.
-**Evidencia nueva (2026-08-19)**: pedido real de 4 bolsas (~$160.000, conv `1deb5fda`,
-"Lodge P. V.") murió a mitad de flujo tras una pregunta de permiso del bot. Hoy ese carrito
+**Evidencia nueva (2026-08-19)**: un pedido real de 4 bolsas (~$160.000) murió a mitad de flujo
+tras una pregunta de permiso del bot. Hoy ese carrito
 no existe para ninguna pieza del sistema: 41 conversaciones `active` históricas y ninguna
 señal de "abandonada". Es el mejor caso concreto de este frente hasta la fecha.
 **No es resucitar `leads`/`orders`** (ADR-004 sigue vigente): entidad nueva, propósito
@@ -662,9 +662,8 @@ solo frente con dos identificadores, ninguno válido. Aquí queda unificado como
 "turnos sin progreso del DAG" y "repetición semántica" ya eran dos de sus señales. Detalle
 del caso no cubierto: `docs/registros/registro-P8-limitaciones.md`.
 **Estado**: diseñado, no implementar aún. **La amenaza ya se materializó dos veces, y el breaker
-bastó las dos** (verificado 2026-09-01): el bot de vuelos del 07-18 (conv `d6349fa0`) y un bot de
-soporte de telecomunicaciones el 08-15 (conv `e59e6100`, 28 inbound en 4 minutos, 16 outbound, breaker
-a las 14:06:28 UTC). Dato que encoge el frente todavía más: **23 de esos 28 inbound eran ilegibles**
+bastó las dos** (verificado 2026-09-01): el bot de vuelos del 07-18 y un bot de soporte de
+telecomunicaciones el 08-15 (28 inbound en 4 minutos, 16 outbound, breaker a las 14:06:28 UTC). Dato que encoge el frente todavía más: **23 de esos 28 inbound eran ilegibles**
 (16 `unsupported`, 7 `image`), así que con el guard de contenido ilegible —vivo desde el 08-23— ese
 episodio produciría 5 turnos en vez de 28. El guard desactivó la mayor parte del único caso observado
 de P10 sin proponérselo.
@@ -698,8 +697,8 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
 - **P2 · ORDER_FIELDS** (quantity/grind/roast se persisten; registro de compra con quantity/total).
 - **P4 · Observabilidad de compaction** (dejó de fallar en silencio).
   **Causa raíz encontrada el 2026-09-01, 80 días después**: la clave de OpenAI del backend es
-  inválida. `AuthenticationError: 401 invalid_api_key` sobre el secreto `openai-key` de Key Vault,
-  capturado justamente por el ERROR con traza que P4 instaló — log de `ca-backend` del
+  inválida. `AuthenticationError: 401 invalid_api_key` sobre el secreto de OpenAI en Key Vault,
+  capturado justamente por el ERROR con traza que P4 instaló — log de consola del backend del
   **2026-08-30T21:53:34.869Z**, `conversation_summary.py:220`. Era la **candidata 2** del
   `diagnostico-2026-06-14-P4-compaction.md`. n8n llama a OpenAI con otra credencial, y por eso el bot
   conversa mientras la memoria muere en silencio. **El fix es rotar el secreto, no código.** Hasta
@@ -720,7 +719,8 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
 - **P18 · Diagnóstico de datos legacy** — el diagnóstico se hizo el 08-19, y **la limpieza que quedó
   anotada como pendiente ya estaba hecha**: el `audit_log` registra `profile_corrected` (`operator`,
   2026-07-31 20:31:19 UTC, `purchase_count_before: 2 → after: 1`, PR #57). El `purchase_count: 2` que
-  hoy tiene `15d89710` son **dos compras distintas y legítimas** (07-20 y 08-01), no el duplicado. Las
+  hoy tiene ese `client_user` son **dos compras distintas y legítimas** (07-20 y 08-01), no el
+  duplicado. Las
   4 conversaciones con `payment_confirmation` están las 4 en `closed`. Cerrado sin trabajo pendiente
   (verificado 2026-09-01).
 - **P19 · Mensaje engañoso de Telegram** — **cerrado sin implementar**: dependía de que existieran
@@ -744,12 +744,12 @@ sistema falló; **P16 (bytes) y P22 salen de los primeros ocho**, porque son lo 
 desbloquea ventas; y entran P31, P32 y P33, que son baratos y atacan daño ya observado en clientes
 reales.
 
-1. ~~**Rotar `openai-key`** en Key Vault~~ ✅ **hecho el 2026-09-04**, y verificado contra la API
-   con la petición exacta de la compaction (`json_schema` estricto, HTTP 200). Ojo con el detalle
-   que casi lo deja a medias: la clave nueva se había creado como secreto aparte
-   (`secret-key-arenillo-open-ai`) y el backend lee `openai-key`; ya está copiada. **Falta que una
-   revisión nueva la tome** — el secreto se lee una sola vez, al arrancar —, cosa que hace el
-   despliegue del punto 2. Hasta entonces la deuda #7 sigue viva: **0 de 39** clientes con memoria.
+1. ~~**Rotar el secreto de OpenAI** en Key Vault~~ ✅ **hecho el 2026-09-04**, y verificado contra
+   la API con la petición exacta de la compaction (`json_schema` estricto, HTTP 200). Ojo con el
+   detalle que casi lo deja a medias: la clave nueva se había creado bajo **otro nombre de secreto**,
+   y el backend solo lee el suyo; ya está copiada al que corresponde. **Falta que una revisión nueva
+   la tome** — el secreto se lee una sola vez, al arrancar —, cosa que hace el despliegue del
+   punto 2. Hasta entonces la deuda #7 sigue viva: **0 de 39** clientes con memoria.
 2. **P15 vía ADR-010, en cuatro pasos y en este orden**: ~~aplicar el DDL~~ ✅ (2026-09-04
    02:09:28 UTC) → **mergear y desplegar** → aplicar datos y prompt (`014`) → verificar en una
    conversación real. El envío a Manizales quedó confirmado por el negocio. Al mergear: ADR-010
