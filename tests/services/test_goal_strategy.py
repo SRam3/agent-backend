@@ -290,3 +290,67 @@ def test_23_order_details_wording_captures_not_asks():
     assert "if the customer mentions" in prompt
     assert "Do NOT ask for these proactively" in prompt
     assert "ask for grind" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Order details that block the summary (ADR-010)
+# ---------------------------------------------------------------------------
+_RESOLVED_PRODUCT = "1f1f1f1f-0000-0000-0000-000000000001"
+
+
+def _order(**overrides):
+    data = {
+        "product_id": _RESOLVED_PRODUCT,
+        "quantity": 2,
+        "grind_preference": "grano",
+        "full_name": "Ana Ruiz",
+        "phone": "3001234567",
+        "shipping_address": "Cra 1 # 2-3",
+        "shipping_city": "Manizales",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_grind_and_quantity_are_asked_for_once_they_block_the_summary():
+    """The relay for what migration 013 removes from the prompt. Without it the
+    sale stalls in silence: data complete, backend waiting on the grind, and the
+    LLM under standing orders never to ask for it."""
+    directive = GoalStrategyEngine().compute(
+        "close_sale", _order(grind_preference=None, quantity=None), {}
+    )
+    assert directive.blocking_order_details == [
+        "the quantity (how many bags)",
+        "the grind (whole bean or ground)",
+    ]
+    prompt = directive.to_prompt()
+    assert "REQUIRED TO CLOSE" in prompt
+    assert "the grind (whole bean or ground)" in prompt
+
+
+def test_nothing_blocks_once_both_are_collected():
+    directive = GoalStrategyEngine().compute("close_sale", _order(), {})
+    assert directive.blocking_order_details == []
+    assert "REQUIRED TO CLOSE" not in directive.to_prompt()
+
+
+def test_pre_product_phase_still_only_captures_never_asks():
+    """P12 regression. Its rule is not contradicted, it is scoped to its phase:
+    before the product is resolved nothing is requested, and the capture hint is
+    the only thing said about order details."""
+    directive = GoalStrategyEngine().compute("close_sale", {}, {})
+    assert directive.blocking_order_details == []
+    prompt = directive.to_prompt()
+    assert "Do NOT ask for these proactively" in prompt
+    assert "REQUIRED TO CLOSE" not in prompt
+
+
+def test_the_directive_no_longer_orders_the_llm_to_write_the_summary():
+    """The backend renders it now. Two authors on the same message would put a
+    model-computed total back in front of the customer."""
+    directive = GoalStrategyEngine().compute(
+        "close_sale", _order(user_confirmation=None), {}
+    )
+    assert directive.current_checkpoint == "user_confirmed"
+    assert "Present an order summary" not in directive.next_action
+    assert "system already sent the order summary" in directive.next_action

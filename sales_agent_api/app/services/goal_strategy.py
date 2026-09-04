@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.services.order_summary import summary_missing_fields
+
 
 # ---------------------------------------------------------------------------
 # Checkpoint status
@@ -46,6 +48,10 @@ class StrategyDirective:
     missing_fields: list[str]
     completed_checkpoints: list[str]
     all_complete: bool
+    #: Order details the summary needs that the DAG does not track (ADR-010).
+    #: Empty until the product is resolved, so P12's "capture, never ask"
+    #: guidance keeps owning the whole pre-product phase.
+    blocking_order_details: list[str] = field(default_factory=list)
 
     def to_prompt(self) -> str:
         """Format the directive as a soft hint for the LLM system prompt.
@@ -70,6 +76,20 @@ class StrategyDirective:
             lines.append(
                 f"HINT (low priority, only when the conversation flows there naturally): {self.next_action.lower()}",
             )
+            # ADR-010: quantity and grind are REQUIRED for the backend to send
+            # the summary, but they are ORDER_FIELDS, not DAG checkpoints — so
+            # nothing here would ever ask for them. Until this line existed, the
+            # only place in the system that pushed for the quantity was the
+            # prompt's RESUMEN DE CONFIRMACIÓN section, which migration 013
+            # removes. Without a relay the sale would stall in silence: data
+            # complete, backend waiting on the grind, LLM under orders never to
+            # ask. This is that relay.
+            if self.blocking_order_details:
+                lines.append(
+                    "REQUIRED TO CLOSE: the order cannot be summarised without "
+                    + " and ".join(self.blocking_order_details)
+                    + ". Ask for ONE of them, naturally, when the moment allows."
+                )
             # Order details (grind/roast/quantity) are ORDER_FIELDS, not DAG
             # checkpoints — the engine never asks for them. But the early,
             # product-talk phase is exactly when customers volunteer them, and
@@ -158,6 +178,29 @@ GOAL_BUILDERS: dict[str, callable] = {
 }
 
 
+#: Order details the backend's summary requires but the DAG does not track.
+_ORDER_DETAIL_LABELS = {
+    "quantity": "the quantity (how many bags)",
+    "grind_preference": "the grind (whole bean or ground)",
+}
+
+
+def blocking_order_details(collected_data: dict) -> list[str]:
+    """Order details that would block the summary, once the product is resolved.
+
+    Empty before `product_id` lands: the pre-product phase stays owned by P12's
+    "capture what they volunteer, never ask" guidance, which is where that rule
+    was put and where it makes sense. This only speaks up afterwards, when the
+    missing detail is the one thing standing between the customer and their
+    order summary.
+    """
+    collected_data = collected_data or {}
+    if not collected_data.get("product_id"):
+        return []
+    missing = summary_missing_fields(collected_data)
+    return [_ORDER_DETAIL_LABELS[f] for f in _ORDER_DETAIL_LABELS if f in missing]
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -240,6 +283,7 @@ class GoalStrategyEngine:
             missing_fields=missing_fields,
             completed_checkpoints=completed,
             all_complete=False,
+            blocking_order_details=blocking_order_details(collected_data),
         )
 
     # ------------------------------------------------------------------
@@ -284,7 +328,10 @@ class GoalStrategyEngine:
             "phone": "Try to learn the customer's phone number for the carrier.",
             "shipping_address": "Try to learn the full delivery address (neighborhood, street, number, apartment).",
             "shipping_city": "Try to learn the customer's city.",
-            "user_confirmation": "Present an order summary with all the collected data and ask the customer to confirm.",
+            # The BACKEND renders and sends the summary now (ADR-010 §1). Asking
+            # the LLM to present one too would put two authors on the same
+            # message, and the model's version carries a total it computed.
+            "user_confirmation": "The system already sent the order summary. Wait for the customer's answer; do NOT write a summary or restate any prices or totals yourself.",
             "payment_confirmation": "Share payment methods and ask the customer to send payment receipt once paid.",
         }
         return prompts.get(field, f"Ask for the customer's {field.replace('_', ' ')}.")

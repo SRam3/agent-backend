@@ -5,9 +5,14 @@ After the LLM produces a response, n8n calls this service to:
      identical outbound, escalate to human_handoff and suppress it
      (approved=False, empty final_response_text) instead of persisting.
   1. Persist strategy-relevant extracted_data into conversation.extracted_context
-     (DAG gate: user_confirmation needs name+phone+address+city). A
-     payment_confirmation proposed by the LLM is DROPPED — confirming a payment
-     is the operator's authority alone (ADR-009, see OPERATOR_ONLY_FIELDS).
+     (DAG gate: user_confirmation needs name+phone+address+city, AND the four
+     deterministic conditions of ADR-010 §5). A payment_confirmation proposed by
+     the LLM is DROPPED — confirming a payment is the operator's authority alone
+     (ADR-009, see OPERATOR_ONLY_FIELDS).
+  1b. Render and send the order summary when the order is complete and what we
+     last presented no longer matches (ADR-010 §1): the backend's text REPLACES
+     the LLM's for that turn, and any modification invalidates a standing
+     confirmation (§6).
   2. Merge stable customer facts back into client_users.profile (persistent).
      Never a purchase record: an agent turn NEVER records a sale.
   3. Auto-escalate to human_handoff when all purchase data is collected.
@@ -27,6 +32,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import AuditLog, Client, ClientUser, Conversation, Message, Product
 from app.services.goal_strategy import GoalStrategyEngine
+from app.services.order_summary import (
+    TO_CONFIRM,
+    Shipping,
+    SummaryState,
+    compute_fingerprint,
+    evaluate_user_confirmation,
+    order_mutations,
+    render_summary,
+    resolve_shipping,
+    should_render_summary,
+)
 from app.services.state_machine import (
     InvalidTransitionError,
     validate_transition,
@@ -94,6 +110,16 @@ class StaleContextError(AgentActionError):
 # never accepted from an agent turn at all — see OPERATOR_ONLY_FIELDS.)
 _USER_CONFIRMATION_REQUIRES = ("full_name", "phone", "shipping_address", "shipping_city")
 
+# Deliberately WITHOUT product_id. H6 is resolved structurally by ADR-010, not by
+# patching this tuple: the summary needs the price, the price needs product_id,
+# and no confirmation is accepted without a summary. Adding it here would be the
+# patch the ADR declares unnecessary.
+
+#: A turn that carries no summary state at all refuses every confirmation. Used
+#: as the default so a caller that forgets to pass state fails CLOSED.
+_NO_SUMMARY_STATE = SummaryState(fingerprint=None, sent_at=None)
+_UNKNOWN_SHIPPING = Shipping(cost=None, status=TO_CONFIRM)
+
 # Circuit breaker (P8): the outbound about to be sent fires the breaker when it
 # is the 3rd consecutive identical response — it equals BOTH of the two most
 # recent outbounds of the same conversation.
@@ -142,6 +168,10 @@ def _recent_outbound_stmt(client_id: uuid.UUID, conversation_id: uuid.UUID):
 def compute_context_updates(
     extracted_data: dict,
     current_context: dict,
+    *,
+    summary_state: Optional[SummaryState] = None,
+    trigger_message_at: Optional[datetime] = None,
+    shipping: Optional[Shipping] = None,
 ) -> tuple[dict, dict, list[dict]]:
     """Decide which extracted_data fields get merged into extracted_context.
 
@@ -154,9 +184,15 @@ def compute_context_updates(
       - ``strategy_accepted``: the subset that are DAG strategy fields — drives
         profile merge + lifecycle bump in the caller. ORDER_FIELDS never appear
         here, so they can't trip the engine or the CRM lifecycle.
-      - ``rejections``: ``[{"field", "missing"}]`` for slots dropped because
-        their prerequisites weren't met yet, or because the LLM has no
-        authority over them at all (OPERATOR_ONLY_FIELDS).
+      - ``rejections``: ``[{"field", "gate", "missing"}]`` for slots dropped
+        because their prerequisites weren't met yet, or because the LLM has no
+        authority over them at all (OPERATOR_ONLY_FIELDS). ``gate`` is ``"data"``
+        for a data-sufficiency refusal and ``"context"`` for one of the four
+        deterministic conditions of ADR-010 §5.
+
+    A ``user_confirmation`` that comes back as ``False`` in ``strategy_accepted``
+    is not a rejection but an INVALIDATION (§6): the customer changed the order,
+    so the confirmation they gave for the previous version no longer holds.
     """
     order_updates = {k: v for k, v in extracted_data.items() if k in ORDER_FIELDS and v}
     strategy_updates = {k: v for k, v in extracted_data.items() if k in STRATEGY_FIELDS and v}
@@ -169,7 +205,9 @@ def compute_context_updates(
     # riding on a same-turn user_confirmation) is now impossible a fortiori.
     for field in sorted(OPERATOR_ONLY_FIELDS & strategy_updates.keys()):
         del strategy_updates[field]
-        rejections.append({"field": field, "missing": ["operator_confirmation"]})
+        rejections.append(
+            {"field": field, "gate": "operator", "missing": ["operator_confirmation"]}
+        )
 
     # phone must be a plausible international number (E.164-lax, ADR-008):
     # 7-15 digits. Gated BEFORE merged is computed so garbage rejected this
@@ -177,7 +215,7 @@ def compute_context_updates(
     # The rejection carries no phone value — it must never reach logs.
     if "phone" in strategy_updates and not is_plausible_phone(strategy_updates["phone"]):
         del strategy_updates["phone"]
-        rejections.append({"field": "phone", "missing": ["plausible_format"]})
+        rejections.append({"field": "phone", "gate": "format", "missing": ["plausible_format"]})
 
     # user_confirmation requires full_name + phone + shipping_address + shipping_city
     merged = {**current_context, **order_updates, **strategy_updates}
@@ -185,7 +223,37 @@ def compute_context_updates(
         missing = [f for f in _USER_CONFIRMATION_REQUIRES if not merged.get(f)]
         if missing:
             del strategy_updates["user_confirmation"]
-            rejections.append({"field": "user_confirmation", "missing": missing})
+            rejections.append(
+                {"field": "user_confirmation", "gate": "data", "missing": missing}
+            )
+
+    # ADR-010 §5: the LLM judges the language, the backend judges the context.
+    # Data sufficiency was never the question — it is what let "Barrio El Campin"
+    # close a sale. Four deterministic conditions decide whether the model's
+    # judgement may be accepted at all.
+    if "user_confirmation" in strategy_updates:
+        confirmed, reasons = evaluate_user_confirmation(
+            prior_context=current_context,
+            merged_context=merged,
+            accepted={**order_updates, **strategy_updates},
+            state=summary_state or _NO_SUMMARY_STATE,
+            trigger_message_at=trigger_message_at,
+            shipping=shipping or _UNKNOWN_SHIPPING,
+        )
+        if not confirmed:
+            del strategy_updates["user_confirmation"]
+            rejections.append(
+                {"field": "user_confirmation", "gate": "context", "missing": list(reasons)}
+            )
+
+    # ADR-010 §6: any modification invalidates a standing confirmation. This is
+    # the path that fixes the "impossible to unmark" defect — NOT an exception in
+    # the truthy filter above. The LLM still has no authority to unmark; the
+    # backend does, and only on deterministic evidence that the order moved.
+    if current_context.get("user_confirmation") and order_mutations(
+        current_context, {**order_updates, **strategy_updates}
+    ):
+        strategy_updates["user_confirmation"] = False
 
     accepted = {**order_updates, **strategy_updates}
     return accepted, strategy_updates, rejections
@@ -202,6 +270,41 @@ def is_new_user_confirmation(strategy_accepted: dict, prior_context: dict) -> bo
         "user_confirmation" in strategy_accepted
         and not prior_context.get("user_confirmation")
     )
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Timestamps compared across this module must all be aware."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def trigger_message_at(strategy_snapshot: Optional[dict]) -> Optional[datetime]:
+    """When the inbound that produced THIS strategy_version arrived (ADR-010 §5).
+
+    Read from the snapshot the ingest wrote, never from "the latest inbound of
+    the conversation": the debounce commits a message at step 8b and only bumps
+    the version 5 s later, so during a burst there is a newer inbound that has
+    not invalidated anything yet — and condition 3 would pass on a message the
+    customer had not been answered yet.
+
+    Pure. Missing or unparseable ⇒ None, which fails the condition CLOSED.
+    """
+    raw = (strategy_snapshot or {}).get("trigger_message_at")
+    if not raw:
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(str(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
+def snapshot_language(strategy_snapshot: Optional[dict]) -> str:
+    """The language detected on this turn's inbound (ADR-008), stashed by the
+    ingest. /agent/action never sees the customer's text, and the summary the
+    backend renders has to come out in their language."""
+    language = (strategy_snapshot or {}).get("live_language")
+    return "en" if language == "en" else "es"
 
 
 def _coerce_int(value) -> Optional[int]:
@@ -333,19 +436,53 @@ async def process_agent_action(
             "rejection_reason": "loop_detected",
         }
 
+    # --- 2.6 Backend-owned order facts (ADR-010) -----------------------------
+    # Read ONCE, here, before anything this turn writes. Evaluating the gate
+    # against a summary this same turn is about to send would let condition 1
+    # grant itself — the exact vice of 2026-08-19 (the LLM asked "¿Todo bien con
+    # esos datos?" and answered itself in the same JSON), moved to the backend.
+    client_row = await session.execute(select(Client).where(Client.id == client_id))
+    client: Optional[Client] = client_row.scalar_one_or_none()
+    business_rules: dict = (client.business_rules or {}) if client else {}
+    shipping_rules = business_rules.get("shipping_rules")
+
+    prior_context: dict = conversation.extracted_context or {}
+    summary_state = SummaryState(
+        fingerprint=conversation.order_summary_fingerprint,
+        sent_at=_as_utc(conversation.order_summary_sent_at),
+    )
+    # The city as it will stand after the merge: it has no gate of its own, so a
+    # city proposed this turn is the one the summary would be priced against.
+    shipping = resolve_shipping(
+        extracted_data.get("shipping_city") or prior_context.get("shipping_city"),
+        shipping_rules,
+    )
+
     # --- 3. Persist extracted_data → extracted_context with DAG gates --------
     if extracted_data:
         accepted, strategy_accepted, rejections = compute_context_updates(
-            extracted_data, conversation.extracted_context or {}
+            extracted_data,
+            prior_context,
+            summary_state=summary_state,
+            trigger_message_at=trigger_message_at(conversation.strategy_snapshot),
+            shipping=shipping,
         )
         for rej in rejections:
             logger.warning("Rejected %s: missing %s", rej["field"], rej["missing"])
             # Surface a premature user_confirmation as a side-effect so n8n/ops
             # can see the bot tried to summarise before data was complete.
-            if rej["field"] == "user_confirmation":
+            if rej["field"] == "user_confirmation" and rej.get("gate") == "data":
                 side_effects.append(
                     f"warning:premature_summary_missing_{'+'.join(rej['missing'])}"
                 )
+            # ADR-010 §5. One side effect per failed condition, on purpose: in
+            # production these are the only instrument for knowing which of the
+            # four is doing the work — and whether any produces false NEGATIVES.
+            # `inbound_predates_summary` is the one to watch: it compares two
+            # different clocks (ours for sent_at, Meta's for the inbound).
+            elif rej["field"] == "user_confirmation":
+                for reason in rej["missing"]:
+                    side_effects.append(f"warning:confirmation_rejected_{reason}")
             # The LLM claimed a payment. It is dropped (ADR-009), but never
             # silently: this is the money step, and the operator who decides it
             # must SEE that the customer said "ya pagué" rather than have the
@@ -357,7 +494,6 @@ async def process_agent_action(
             elif rej["field"] == "phone":
                 side_effects.append("warning:invalid_phone_rejected")
         if accepted:
-            prior_context = conversation.extracted_context or {}
             newly_user_confirmed = is_new_user_confirmation(
                 strategy_accepted, prior_context
             )
@@ -371,6 +507,13 @@ async def process_agent_action(
             side_effects.append(f"context_updated:{list(accepted.keys())}")
             if newly_user_confirmed:
                 side_effects.append("checkpoint_completed:user_confirmed")
+            # ADR-010 §6: the order moved, so the confirmation given for the
+            # previous version no longer holds. A new summary follows below.
+            if strategy_accepted.get("user_confirmation") is False:
+                side_effects.append(
+                    "user_confirmation_invalidated:"
+                    + "+".join(order_mutations(prior_context, accepted))
+                )
 
             # Profile merge + CRM lifecycle bump are driven ONLY by DAG strategy
             # fields — order details (quantity/grind/roast) never move lifecycle.
@@ -392,6 +535,60 @@ async def process_agent_action(
                     target="engaged",
                 )
 
+    # --- 3.5 Render and send the order summary (ADR-010 §1, §2) --------------
+    # The backend's text REPLACES the LLM's for this turn. That replacement is
+    # the whole point: it is what turns "the summary was sent" into a fact the
+    # backend owns, and it takes the money arithmetic away from a probabilistic
+    # model. The LLM's response for this turn is discarded — a known, accepted
+    # token cost for v1.
+    final_response_text = response_text
+    context_now: dict = conversation.extracted_context or {}
+    shipping = resolve_shipping(context_now.get("shipping_city"), shipping_rules)
+    unit_price = await _fetch_product_price(
+        session, client_id, context_now.get("product_id")
+    )
+    if should_render_summary(context_now, summary_state, unit_price, shipping):
+        fingerprint = compute_fingerprint(context_now, shipping)
+        final_response_text = render_summary(
+            context_now,
+            unit_price,
+            shipping,
+            snapshot_language(conversation.strategy_snapshot),
+            business_rules,
+        )
+        await session.execute(
+            update(Conversation)
+            .where(Conversation.id == conversation.id)
+            .values(
+                order_summary_fingerprint=fingerprint,
+                order_summary_sent_at=now,
+            )
+        )
+        conversation.order_summary_fingerprint = fingerprint
+        conversation.order_summary_sent_at = now
+        resent = summary_state.fingerprint is not None
+        side_effects.append("order_summary_resent" if resent else "order_summary_sent")
+        session.add(
+            AuditLog(
+                client_id=client_id,
+                event_type="order_summary_sent",
+                entity_type="conversation",
+                entity_id=conversation.id,
+                actor_type="system",
+                new_value={
+                    "fingerprint": fingerprint,
+                    "shipping_status": shipping.status,
+                    "resent": resent,
+                },
+            )
+        )
+        logger.info(
+            "Order summary sent on conversation %s (fingerprint=%s, resent=%s)",
+            conversation.id,
+            fingerprint[:12],
+            resent,
+        )
+
     # --- 4. Auto-escalate when all purchase data is collected ----------------
     # Only from 'active': human_handoff has nowhere to escalate to, and 'closed'
     # is TERMINAL. Guarding on 'active' (instead of "not human_handoff") closes
@@ -402,11 +599,6 @@ async def process_agent_action(
     # ingest's 24h window would then trap the customer's next message
     # (ingest.py: state != 'closed') in a conversation the bot must not answer.
     if conversation.state == "active":
-        client_row = await session.execute(
-            select(Client).where(Client.id == client_id)
-        )
-        client = client_row.scalar_one_or_none()
-        business_rules = (client.business_rules or {}) if client else {}
         collected_data = conversation.extracted_context or {}
         goal = conversation.active_goal or business_rules.get("default_goal", "close_sale")
         directive = GoalStrategyEngine().compute(goal, collected_data, business_rules)
@@ -471,7 +663,7 @@ async def process_agent_action(
         client_id=client_id,
         direction="outbound",
         message_type="text",
-        content=response_text,
+        content=final_response_text,
         ai_model_used=ai_model,
         ai_prompt_tokens=prompt_tokens,
         ai_completion_tokens=completion_tokens,
@@ -496,7 +688,7 @@ async def process_agent_action(
 
     return {
         "approved": True,
-        "final_response_text": response_text,
+        "final_response_text": final_response_text,
         "new_state": conversation.state,
         "side_effects": side_effects,
         "rejection_reason": None,

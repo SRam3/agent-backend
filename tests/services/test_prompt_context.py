@@ -60,13 +60,61 @@ def test_business_context_includes_product():
     assert "ONLY sell products listed above" in result
 
 
+ARENILLO_RULES_POST_013 = {
+    "currency": "COP",
+    "shipping_rules": {
+        "cities": {
+            "Manizales": {"cost": 5000},
+            "Medellín": {"cost": 15000},
+            "Envigado": {"cost": 15000},
+            "Sabaneta": {"cost": 15000},
+        },
+        "default": "to_confirm",
+        "pickup": False,
+        "international": "no disponible actualmente",
+    },
+}
+
+
 def test_business_context_includes_shipping():
+    """Legacy (migration 005) shape still resolves: the code ships on merge and
+    013 is applied by hand afterwards."""
     result = format_business_context(CAFE_ARENILLO_RULES, CAFE_PRODUCT)
     assert "SHIPPING RULES" in result
     assert "Manizales" in result
     assert "$7.000 COP" in result
-    assert "Medellín" in result
     assert "International" in result
+
+
+def test_only_cities_with_a_real_rate_are_quoted():
+    """ADR-010 §3. A city with a hedge instead of a figure ("variable según
+    distancia") is NOT listed: it falls under the confirm-afterwards rule. The
+    old per-zone ranges were numbers nobody ever checked against a shipment."""
+    result = format_business_context(CAFE_ARENILLO_RULES, CAFE_PRODUCT)
+    assert "Medellín" not in result
+    assert "Any other city" in result
+
+
+def test_fixed_rates_are_stated_without_hedging():
+    """No "aprox." on a rate we actually know: hedging it reads as guessing."""
+    result = format_business_context(ARENILLO_RULES_POST_013, CAFE_PRODUCT)
+    assert "- Manizales: $5.000 COP" in result
+    assert "- Medellín: $15.000 COP" in result
+    assert "aprox" not in result.lower()
+
+
+def test_shipping_block_forbids_inventing_a_rate_and_doing_totals():
+    """The two things ADR-010 takes away from the model: quoting a shipping cost
+    it does not have, and computing money."""
+    result = format_business_context(ARENILLO_RULES_POST_013, CAFE_PRODUCT)
+    assert "NEVER quote, estimate or invent a figure" in result
+    assert "never state a total or do the arithmetic yourself" in result
+
+
+def test_no_pickup_at_the_farm_is_stated():
+    """A new rule: today the LLM improvises when asked."""
+    result = format_business_context(ARENILLO_RULES_POST_013, CAFE_PRODUCT)
+    assert "no pickup at the farm" in result
 
 
 def test_business_context_includes_payment():
