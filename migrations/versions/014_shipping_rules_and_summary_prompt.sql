@@ -21,7 +21,18 @@
 --      PIERDEN su tarifa y pasan a "por confirmar": eran cifras de abril (005) que nunca se
 --      contrastaron contra un envío real. El operador las coordina a mano.
 --
--- Applied:
+-- Applied: 2026-09-04 02:52 UTC (prod, manualmente vía psql, transacción única con
+--          ON_ERROR_STOP y verificación en la misma sesión).
+--          system_prompt_template: 17261 -> 15952 caracteres.
+--          Los tres marcadores que debían desaparecer devuelven false: 'RESUMEN DE
+--          CONFIRMACIÓN', 'equivalencia aproximada' y 'total aprox'. Las dos líneas
+--          OBLIGATORIO de cantidad y molienda están presentes.
+--          shipping_rules reemplazado: quedan Manizales 5000, y Medellín, Envigado y
+--          Sabaneta a 15000; el bloque zones desapareció; pickup false; default
+--          to_confirm. presentation creado.
+--          Aplicada DESPUÉS del despliegue, según su campo Orden y ADR-012: la revisión
+--          con el código que renderiza el resumen quedó corriendo y sana antes de tocar
+--          el prompt.
 
 -- ============================================================
 -- 2. Reglas de envío y presentación (datos, no código)
