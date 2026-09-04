@@ -47,6 +47,29 @@ El backend sabe todo lo que el LLM necesita saber antes de la llamada. El LLM no
 ### Trade-offs explícitos
 - Ganamos confiabilidad operacional a cambio de capacidad emergente. Para venta repetible, vale la pena. Para soporte técnico complejo, posiblemente no.
 
+## Notas as-built (2026-09-01) — el fail-safe tiene dos excepciones, y ninguna estaba escrita aquí
+
+La consecuencia positiva redactada el 2026-04-03 dice: *«Fail-safe: si el backend rechaza la propuesta
+del LLM, el texto de respuesta igual va al usuario. La conversación no se rompe.»* Eso ya no describe
+el comportamiento, y las dos excepciones se introdujeron sin registrarse en este ADR:
+
+1. **P8 · circuit breaker** (2026-07-11). Ante el tercer outbound idéntico consecutivo el backend
+   devuelve `approved=False` y `final_response_text=""`: **suprime** el texto del LLM y el cliente no
+   recibe nada. Ha disparado cuatro veces en producción (07-18 ×3, 08-15 ×1).
+2. **ADR-010 §1 · el resumen del pedido** (2026-08-23, pendiente de despliegue al escribirse esta
+   nota). Cuando el pedido está completo y el resumen guardado ya no coincide, el backend renderiza el
+   suyo y su texto **reemplaza** el del LLM en ese turno.
+
+Ambas son coherentes con la tesis de este ADR — el backend gobierna — y ninguna ha roto una
+conversación: la supresión de P8 va acompañada de escalamiento y aviso al operador, y el reemplazo de
+ADR-010 entrega un mensaje mejor que el que descarta. Lo que quedó desactualizado es la redacción de
+la consecuencia, no la decisión.
+
+**Formulación vigente**: el backend nunca deja al cliente sin respuesta **por un rechazo de slot** —
+un gate que descarta un dato no interrumpe la conversación, y eso sigue siendo el corazón del
+fail-safe. Pero el backend **sí** puede suprimir o reemplazar el texto saliente cuando la decisión es
+suya: un loop detectado, o un dato operativo que no se le confía al NLG.
+
 ## Cuándo revisar
 
 Revisar esta decisión si:

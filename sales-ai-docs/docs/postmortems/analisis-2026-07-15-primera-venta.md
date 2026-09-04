@@ -1,5 +1,10 @@
 # Postmortem de un éxito — Primera venta cerrada
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 **Fecha del análisis**: 2026-07-19 · **Venta**: 2026-07-15 · **Brief**: `docs/briefs/brief-analisis-2026-07-15-primera-venta.md`
 
 **Convención de evidencia**: toda afirmación con timestamp UTC y/o message_id corto está confirmada con SELECT contra la Postgres viva (read-only). PII enmascarada en todo el documento. `archivo:línea` = inferido del repo.
@@ -10,9 +15,9 @@
 
 ## 0. Identificación (y una corrección a la premisa del brief)
 
-**La conversación de la venta es `31e4…09c8`, iniciada 2026-07-15 19:57:07 UTC**, cliente `b949…705a` (nombre "A. E. C.", tel `***5481`), 26 mensajes, 7 minutos 29 segundos. Es la única candidata: es la única conversación reciente con `user_confirmation=true` y datos completos en `extracted_context`, y su profile sincronizado coincide con lo que el operador usó.
+**La conversación de la venta es `conv-07-15`, iniciada 2026-07-15 19:57:07 UTC**, cliente `cliente-07-15` (nombre la clienta, tel `<teléfono>`), 26 mensajes, 7 minutos 29 segundos. Es la única candidata: es la única conversación reciente con `user_confirmation=true` y datos completos en `extracted_context`, y su profile sincronizado coincide con lo que el operador usó.
 
-**Pero la premisa del brief no se cumple en datos: esta conversación NUNCA pasó a `human_handoff`.** Su estado sigue siendo `active`. El DAG se detuvo en `user_confirmed`; `payment_confirmation` jamás se propuso ni se persistió, y por tanto el auto-escalate jamás disparó. La única conversación en `human_handoff` de toda la base (`d634…b5ab`, 2026-07-18) no es una venta: es un **loop bot-a-bot** — un bot de notificaciones de vuelos de LATAM escribió al número ("…tu vuelo n° 4012 de LATAM…", 12:49:35) y nuestro bot quedó saludando en bucle hasta que el circuit breaker P8 disparó (`loop_detected`, 12:51:12).
+**Pero la premisa del brief no se cumple en datos: esta conversación NUNCA pasó a `human_handoff`.** Su estado sigue siendo `active`. El DAG se detuvo en `user_confirmed`; `payment_confirmation` jamás se propuso ni se persistió, y por tanto el auto-escalate jamás disparó. La única conversación en `human_handoff` de toda la base (`conv-07-18`, 2026-07-18) no es una venta: es un **loop bot-a-bot** — un bot de notificaciones de vuelos de LATAM escribió al número ("…tu vuelo n° 4012 de LATAM…", 12:49:35) y nuestro bot quedó saludando en bucle hasta que el circuit breaker P8 disparó (`loop_detected`, 12:51:12).
 
 Esto reencuadra todo: la venta se cerró, pero **el sistema nunca se enteró de que cerró**. Lo que sigue analiza ambas cosas.
 
@@ -42,7 +47,7 @@ Los primeros 4 turnos del bot incluyen tres preguntas de permiso: *"¿Te gustar�
 
 ## 5. Gates y checkpoints — se ejercieron poco, y limpio
 
-- **Cero rechazos**: los 12 `agent_turn` del audit_log solo registran `context_updated`; ningún `warning:*`. El teléfono `***5481` (10 dígitos) pasó el gate E.164-laxo sin fricción — y de hecho coincide con el número de WhatsApp de la clienta (verificación que el sistema no hace, pero los datos eran consistentes).
+- **Cero rechazos**: los 12 `agent_turn` del audit_log solo registran `context_updated`; ningún `warning:*`. El teléfono `<teléfono>` (10 dígitos) pasó el gate E.164-laxo sin fricción — y de hecho coincide con el número de WhatsApp de la clienta (verificación que el sistema no hace, pero los datos eran consistentes).
 - **P3 no se ejerció** (no hubo rechazo previo que requiriera recálculo). El gate de `user_confirmation` aceptó a la primera propuesta real porque los 4 slots llevaban ya dos turnos completos.
 - **El DAG nunca completó**: tras "te comparto los medios de pago… me envías el comprobante" (20:04:36), **cero ingests llegaron al backend** (último `message_ingest`: 20:04:33). El comprobante — si existió — nunca tocó el sistema. No es determinable con datos del backend si la clienta no lo envió por WhatsApp o si se perdió aguas arriba (Chakra/n8n). El pago, es decir el cierre real, ocurrió **fuera de la vista del sistema**.
 - **El corte post-handoff NO queda acreditado por esta venta.** El bot no volvió a responder porque no llegó ningún mensaje más — no porque un corte actuara (nunca hubo handoff que cortar). Peor: en la única conversación con handoff real (el loop LATAM), hay **7 outbounds persistidos DESPUÉS de la transición a `human_handoff`** (12:51:12), y el breaker re-disparó dos veces más (12:51:55, 13:30:48). Primera evidencia en prod de que la deuda #10 es real: n8n sigue enviando pese al handoff. La confirmación del humano de que "el bot no volvió a responder" es cierta para la venta, pero por ausencia de estímulo, no por diseño.

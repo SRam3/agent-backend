@@ -81,6 +81,31 @@ fecha en su lugar (`brief-audit-2026-06-14-estado-y-plan.md`).
 - `registro-<ID>-<slug>.md` en `registros/` — hechos duraderos sobre un frente que no son
   ni decisión ni incidente (p. ej. limitaciones conocidas de algo ya entregado).
 
+### Convención de anonimización
+
+Los documentos versionados **no llevan** material de clave, nombres de recursos de
+infraestructura, identificadores de plataforma ni datos personales de clientes. Concretamente:
+
+| Qué | Cómo se escribe |
+|---|---|
+| Claves, tokens, valores de secretos | nunca, ni siquiera un fragmento o su longitud |
+| Nombres de secretos del vault | por su rol («el secreto de OpenAI»), no por su nombre |
+| Container App, resource group, Key Vault, host de Postgres, cuenta de registro | `<CONTAINER_APP>`, `<RESOURCE_GROUP>`, `<KEY_VAULT_NAME>`, `<POSTGRES_HOST>`, `<HOST>` |
+| ID de workflow de n8n | `<workflow_id>`; el workflow se cita por su nombre |
+| `phone_number_id`, WABA id, wamid, BSUID | `<phone_number_id>`, `<waba_id>`, `wamid.…`, `CO.…` |
+| Teléfonos, nombres, direcciones, llaves de pago | descritos, nunca transcritos ni «enmascarados» a medias |
+| `conversations.id` y `client_users.id` | etiqueta estable por fecha: `conv-MM-DD`, `cliente-MM-DD`, con sufijo `-a`/`-b` si hay varias el mismo día |
+
+**Sí se conservan**, a propósito: números de ejecución de n8n, timestamps, referencias
+`archivo:línea`, SHAs de commit, números de PR y hashes de contenido como el md5 del prompt. Son
+la moneda de evidencia del repo, no sirven fuera de él, y las ejecuciones expiran solas con la
+retención.
+
+**Dónde no aplica**: el código y el CI necesitan los nombres reales para funcionar
+(`sales_agent_api/app/main.py` nombra el secreto de OpenAI; `.github/workflows/` nombra el Container
+App y su resource group). Sacarlos de ahí es un cambio operativo, no de documentación, y está
+registrado como tal, no como deuda de estilo.
+
 ### Notación de identificadores
 
 `P<n>` = frente de trabajo · `DEUDA #<n>` = problema observado · `ADR-<nnn>` = decisión.
@@ -109,7 +134,10 @@ docs/
 │   ├── ADR-006-varchar-check-over-enums.md
 │   ├── ADR-007-state-machine-collapse.md
 │   ├── ADR-008-idioma-y-telefono-e164.md
-│   └── ADR-009-handoff-closure-loop.md
+│   ├── ADR-009-handoff-closure-loop.md
+│   ├── ADR-010-backend-gobierna-resumen.md   ← en rama, pendiente de merge
+│   ├── ADR-011-relojes-y-orden-temporal.md
+│   └── ADR-012-orden-migracion-despliegue.md
 ├── briefs/
 │   ├── brief-audit-2026-06-14-estado-y-plan.md
 │   ├── brief-analisis-2026-07-15-primera-venta.md
@@ -118,7 +146,10 @@ docs/
 │   ├── brief-impl-P8-circuit-breaker.md
 │   ├── brief-impl-P11-fix-venta-duplicada.md
 │   ├── brief-impl-P12-order-fields-directive.md
-│   └── brief-impl-ADR-008-idioma-telefono.md
+│   ├── brief-impl-P14-lid-bsuid-final.md
+│   ├── brief-impl-allowlist-contenido-ilegible.md
+│   ├── brief-impl-ADR-008-idioma-telefono.md
+│   └── brief-impl-ADR-010-backend-gobierna-resumen.md   ← en rama
 ├── registros/
 │   └── registro-P8-limitaciones.md
 └── postmortems/
@@ -128,7 +159,11 @@ docs/
     ├── analisis-2026-07-15-primera-venta.md
     ├── diagnostico-2026-07-15-slot-perdido.md
     ├── postmortem-2026-07-21-n8n-scale-to-zero.md
-    └── diagnostico-2026-08-07-notacion-y-nombres.md
+    ├── diagnostico-2026-08-07-notacion-y-nombres.md
+    ├── analisis-2026-08-19-venta-bsuid-colision-operador.md
+    ├── diagnostico-2026-08-22-post-corte-echoes-y-silencio.md
+    ├── diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md
+    └── auditoria-2026-09-01-roadmap-y-planeacion.md
 ```
 
 > `postmortems/` guarda los cuatro tipos de registro inmutable, no solo postmortems; el

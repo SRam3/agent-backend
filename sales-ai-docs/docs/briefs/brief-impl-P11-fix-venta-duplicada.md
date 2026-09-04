@@ -17,7 +17,7 @@
 
 ## Contexto: qué pasó y por qué
 
-**El síntoma**: en el e2e del lazo de handoff (2026-07-20, conversación 9635…bce7), la
+**El síntoma**: en el e2e del lazo de handoff (2026-07-20, conversación conv-07-20), la
 venta se registró DOS VECES en el profile del cliente. `purchase_count: 2`, dos
 registros idénticos (quantity: 2, total: 80000, mismo product_id, mismo
 conversation_id), separados 67 segundos.
@@ -66,7 +66,7 @@ la ÚNICA autoridad del pago, en código, no solo en el documento.**
 - **Prompt, lugar 1 (DB)**: `clients.system_prompt_template` (texto de
   `009_humanize_prompt_after_apr30_review.sql:217`): instruye
   "`payment_confirmation`: true cuando el cliente envíe el comprobante".
-- **Prompt, lugar 2 (n8n vivo)**: workflow `cafe_arenillo_v2` (xKtfVQsyYWkwQta9), nodo
+- **Prompt, lugar 2 (n8n vivo)**: workflow `cafe_arenillo_v2` (<workflow_id>), nodo
   "Build LLM Prompt": lista `payment_confirmation` como key válida de extracción. Mismo
   texto en el export `n8n_workflow/cafe_arenillo_v2.json:403`.
 
@@ -138,7 +138,7 @@ En `tests/services/test_agent_action.py` y `tests/services/test_confirm_payment.
 ## Limpieza de datos (PASO SEPARADO, después del fix, en manos del humano)
 
 NO es parte del fix de código. Es un UPDATE deliberado a producción sobre una fila
-conocida: `client_user 15d89710-…` ("Sebastian", tel ***8477 = número de prueba del
+conocida: `client_user cliente-recurrente` (identidad de prueba del dueño, número de prueba del
 humano). Estado sucio actual: `purchase_count: 2`, dos registros duplicados. Objetivo:
 `purchase_count: 1` con el registro legítimo (el del operador, 22:46:45.509); eliminar el
 registro del LLM (22:45:38.117).

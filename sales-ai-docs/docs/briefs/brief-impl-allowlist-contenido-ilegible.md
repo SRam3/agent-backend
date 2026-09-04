@@ -39,7 +39,7 @@ Medido contra prod (diagnóstico 2026-08-22, retención de 4 días — cotas inf
    venta** ("Hola, soy Sebastian…"). La clienta respondió "🤔" y el bot se re-presentó otra
    vez. Costó 2 turnos y el disfraz de humano.
 2. **2026-08-19 22:15 UTC, audio con `content=''`**: la venta ya había cerrado la conversación,
-   así que el ingest abrió una nueva (`d7c70f32`, v1, sin historial) y el bot soltó
+   así que el ingest abrió una nueva (`conv-08-19-c`, v1, sin historial) y el bot soltó
    "Hola, ¿cómo estás? Aquí estoy para ayudarte con lo que necesites" — **5.739 tokens para
    saludar como desconocida a la clienta que acababa de comprar**, mientras el dueño cerraba
    la logística a mano. Cerrar la venta EMPEORÓ el bug en vez de contenerlo.

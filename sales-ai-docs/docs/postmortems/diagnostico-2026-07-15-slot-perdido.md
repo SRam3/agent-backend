@@ -1,6 +1,11 @@
 # Diagnóstico — Slot perdido en la primera venta (Hipótesis B confirmada)
 
-**Fecha del diagnóstico**: 2026-07-19 · **Turno analizado**: 2026-07-15 19:58 UTC (conversación `31e4…09c8`) · **Origen**: `analisis-2026-07-15-primera-venta.md` §2 · **Fix derivado**: `docs/briefs/brief-impl-P12-order-fields-directive.md`
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
+**Fecha del diagnóstico**: 2026-07-19 · **Turno analizado**: 2026-07-15 19:58 UTC (conversación `conv-07-15`) · **Origen**: `analisis-2026-07-15-primera-venta.md` §2 · **Fix derivado**: `docs/briefs/brief-impl-P12-order-fields-directive.md`
 
 **Convención de evidencia**: timestamps UTC y message_ids = confirmado con SELECT read-only contra la Postgres viva; `[n8n]` = leído del workflow vivo `cafe_arenillo_v2`; `archivo:línea` = repo. PII enmascarada.
 
@@ -20,7 +25,7 @@ El LLM no propuso ningún slot en ese turno. La evidencia cierra las tres fronte
 
 ### 1. El payload crudo del turno es `{}`
 
-El outbound que responde al mensaje es `fe96a840-…-5aef1041b411` (19:58:17, gpt-4o-mini). Su `messages.extracted_data` literal: **`{}`**. Y ese campo guarda la propuesta **cruda**: `agent_action.py:355` persiste el `extracted_data` del request sin mutarlo (`compute_context_updates` construye dicts nuevos, nunca toca el input).
+El outbound que responde al mensaje es `<mensaje outbound>` (19:58:17, gpt-4o-mini). Su `messages.extracted_data` literal: **`{}`**. Y ese campo guarda la propuesta **cruda**: `agent_action.py:355` persiste el `extracted_data` del request sin mutarlo (`compute_context_updates` construye dicts nuevos, nunca toca el input).
 
 ### 2. n8n reenvía el output del LLM textual, sin filtrar
 

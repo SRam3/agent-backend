@@ -15,7 +15,9 @@
 > sección "Orden sugerido de cierre". Esto aplica en particular a lo que vino de
 > `docs/north-star.md`, que sigue siendo contexto de dirección de solo lectura.
 >
-> Última actualización: 2026-08-29 (comprobante ciego y dirección perdida del miércoles 08-26 — ver
+> Última actualización: 2026-09-01 (auditoría del ROADMAP contra el sistema vivo — ver
+> `docs/postmortems/auditoria-2026-09-01-roadmap-y-planeacion.md`).
+> Anterior: 2026-08-29 (comprobante ciego y dirección perdida del miércoles 08-26 — ver
 > `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`).
 > Anterior: 2026-08-19 (análisis de la venta real BSUID — ver
 > `docs/postmortems/analisis-2026-08-19-venta-bsuid-colision-operador.md`)
@@ -46,7 +48,7 @@ el mismo objeto y fue justo lo que hizo perder la pista de qué estaba hecho y q
 - **`P` mayúscula** en prosa y en nombres de archivo. Las ramas git van en minúscula
   (`feat/p14-lid-privacidad`) como excepción deliberada: es convención git y no genera
   ambigüedad.
-- Frentes nuevos toman el siguiente número libre — hoy, **P31**.
+- Frentes nuevos toman el siguiente número libre — hoy, **P34**.
 - **Un frente sin número P no existe.** `purchase_intents` estuvo citado como pendiente en
   cuatro ADRs y en `CLAUDE.md` durante meses sin número propio, y por eso nunca entró en
   ninguna priorización. Hoy es P24. Si algo aparece dos veces en prosa, dale un número.
@@ -71,7 +73,7 @@ Riesgo de implementación: [B]ackend acotado · [DB] migración · [N8N] workflo
 ### P14 · Mensajes con LID/privacidad se pierden en silencio  ← CERRADO, verificado e2e
 **Qué**: WhatsApp desplegó privacidad de número. Para clientes con privacidad activada,
 Meta omite `from` y `wa_id` y manda solo el **BSUID** (Business-Scoped User ID,
-`CO.1034…`). El workflow validaba `from` con `typeValidation: strict` → rama false → Stop,
+`CO.…`). El workflow validaba `from` con `typeValidation: strict` → rama false → Stop,
 marcado "success" en 15 ms. **Drop 100% silencioso**: sin error, sin alerta, sin registro.
 **Evidencia**: **2026-08-04** (no 08-01 — `timestamp 1785873069` = 14:51:09 COT), clienta
 real escribió "Hola" y se perdió. Ejecución n8n 9459. Único mensaje real de cliente ese
@@ -139,7 +141,7 @@ decodifica a `CO.XXXXXXXXXXXXXXXX`, o sea **la respuesta salió contra el BSUID,
 teléfono**. Fila en prod: `bsuid=CO.XXXXXXXXXXXXXXXX, phone_number=NULL`.
 
 **Validación con cliente real (2026-08-19)**: 24 h después del e2e sintético, una clienta
-real con privacidad activada (`bsuid CO.…5687`, `phone_number NULL`) atravesó el flujo
+real con privacidad activada (`bsuid CO.…`, `phone_number NULL`) atravesó el flujo
 completo — 27 inbound, 23 outbound, todos contra el BSUID — y llegó hasta el punto de pago.
 P14 es el mecanismo que hizo EXISTIR esa venta (antes era la exec 9459: drop de 15 ms).
 Postmortem: `analisis-2026-08-19-venta-bsuid-colision-operador.md`.
@@ -181,9 +183,16 @@ incompleto (la clienta nunca nombró el producto: "este café" + imagen ciega). 
 verificada en código: `confirm-payment` registraría la venta sin precio/total
 (`_fetch_product_price(None) → None`). Decidir dentro de P15 si el gate exige el DAG
 upstream completo.
-**Empezar por**: diagnóstico read-only (cómo se fija hoy user_confirmation, por qué el
-cruce lo disparó, si la solución se parece a la de payment).
-Riesgo: [B] probable, a confirmar tras diagnóstico.
+**Estado (2026-09-01)**: el diagnóstico está hecho y la decisión escrita. `ADR-010` vive en la rama
+`feat/adr-010-backend-gobierna-resumen` con `services/order_summary.py`, la migración `013` y sus
+tests: el backend renderiza el resumen, calcula el total y solo acepta la confirmación si se cumplen
+cuatro condiciones deterministas. **Estado del despliegue (2026-09-04)**: la migración se partió en dos (P33) y **el DDL ya está
+aplicado en prod** — `013_add_order_summary_state.sql`, 02:09:28 UTC, `conversations` de 16 a 18
+columnas, aditivo y nullable, con el código viejo corriendo sin novedad. El envío a Manizales a
+$5.000 **queda confirmado por el negocio** (2026-09-03): no era un error de la migración, es una
+bajada deliberada sobre la tarifa de abril. **Falta**: mergear y desplegar, y después aplicar
+`014_shipping_rules_and_summary_prompt.sql` y verificar en una conversación real.
+Riesgo: [B] + [DB].
 
 ### P16 · Medios entrantes llegan con content vacío (sistema ciego a imagen y audio)
 **Qué**: los mensajes con medio se guardan con `content` vacío — no hay manejo de medios.
@@ -224,10 +233,22 @@ caption cae en "sin contenido" como todas.
 el bot ya no contesta a un medio ilegible — pero sigue sin verlo, así que opera sobre un diálogo
 al que le falta lo esencial. Caso real: un cliente envió el comprobante de pago a las 17:37:27 y
 **64 segundos después el bot le pidió el comprobante** ("Cuando realices el pago, no olvides
-enviarme el comprobante"), disparado por un "Excelente!!!" posterior del propio cliente. El guard
+enviarme el comprobante"), disparado por un mensaje de agradecimiento posterior del propio cliente. El guard
 funcionó (exec 11150: `reason: unreadable_content`, 177 ms, sin salida) y aun así el cliente vio
 al bot desconocer su pago. **Silenciar el turno no evita este daño; solo bajar los bytes lo evita.**
 Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
+**Re-medición (2026-09-01): el alcance estaba sobredimensionado.** Hoy son 58 de 359 inbound sin
+contenido legible (16,2 %), pero **39 de esos 58 no son medios** (35 `unsupported`, 2 `reaction`, 1
+`revoke`, 1 `edit`) y ya los resuelve el guard. Los medios son 19 mensajes, **5,3 %**, y **7 de las 14
+imágenes pertenecen a un solo episodio bot-a-bot** (el del 08-15). El material real de
+clientes en cinco meses es del orden de una docena de mensajes, sobre un catálogo de UN producto, y
+ninguna de las imágenes retenidas trae `caption`.
+**Y obliga a tocar el `master`, no solo `cafe_arenillo_v2`**: su `Set` whitelist
+`map_webhook_data_arenillo` copia diez campos y **ninguno es el objeto `image`/`audio`**, así que la
+URL de descarga nunca llega al sub-workflow. Ese nodo fue la causa primaria del drop de P14.
+**La mitad útil de este frente se separó a P32** (placeholder de medios en el historial, 100 %
+backend): evita que el bot contradiga al cliente sin abrir la descarga. Lo que queda aquí es bajar los
+bytes, y es la mitad cara.
 **Dentro del alcance al abrir: revisar el umbral del circuit breaker.** Cerrar P16 hace que
 una imagen legible vuelva a generar turno, así que **restaura implícitamente la sensibilidad
 del breaker** que el guard de contenido ilegible redujo (ver la nota de calibración en P8).
@@ -237,6 +258,28 @@ siendo el correcto en vez de que el cambio ocurra de rebote.
 llegó media?, ¿pasarla al LLM?, ¿persistir el comprobante?, ¿cuánto se retiene?). Decidir
 por separado.
 Riesgo: [ADR] + [B] + [N8N].
+
+### P5 · Alerta de fallo silencioso en n8n (remedia deuda #12)
+**Qué**: cuando el backend falla, nadie se entera. Ni el operador, ni un log, ni Chakra.
+**Corrección de mecanismo (2026-09-01)**: la versión anterior de esta entrada decía que un 409 «mata
+la ejecución». **No es así.** `POST Agent Action` lleva `continueOnFail: true` igual que el ingest, de
+modo que un 409 o un 5xx se convierten en un item con `error`, caen al `else` de `Process Backend
+Response` como `suppressed_reason: "backend_error"`, y la ejecución termina marcada **`success`**. La
+rama de error ya existe; lo que no existe es el aviso.
+**Evidencia**: **cero** 409 en las 268 ejecuciones retenidas del pipeline. Lo que sí ocurrió son 5
+respuestas 500 del ingest el 08-19 (execs 10452, 10566, 10600, 10612, 10650), todas dentro de
+ejecuciones `success`: el modo de falla es real aunque el mecanismo estuviera mal descrito.
+**Por qué sube a 🔴**: es la única forma de enterarse de que el sistema falló, y es **precondición de
+P16** — bajar bytes introduce una descarga que puede fallar dentro de una ventana de 301 s y hoy no
+hay dónde avisarlo.
+**Alcance acotado, sin retry**: un IF sobre `backend_error` y sobre el item de error del ingest, un
+aviso a Telegram reusando el canal de ADR-009, y `suppressed_reason` en el texto del aviso.
+Reintentar un turno después de 5 s de debounce es otra decisión y no entra aquí.
+**Trampa medida**: las únicas ejecuciones en error de la instancia son de un workflow ajeno
+(`Predicción horaria → Telegram`, 7 fallos diarios desde al menos el 08-19). Una alerta basada en
+`status=error` nace ahogada en ruido que no es del producto.
+**Se despacha junto con P9** para tocar el workflow vivo una sola vez, con export antes y después.
+Riesgo: [N8N].
 
 ### P28 · El NLG afirma datos operativos falsos (registrado 2026-08-19, NO abierto)
 **Qué**: no existe ningún gobierno sobre el texto SALIENTE del LLM cuando afirma datos
@@ -270,10 +313,10 @@ operador: "no entré a confirmar rápidamente, me quedé atendiendo porque vi el
 perdido" — cuando el bot falla, el humano va al chat, no a Telegram; el lazo de ADR-009
 asume lo contrario.
 **Segunda ocurrencia real (2026-08-26), con el mecanismo ya identificado**: cerrar la venta
-**reinicia** al bot en vez de silenciarlo. El operador pulsó el botón a las 17:38:38 (`sale_closed`,
-conv `ba58a211`); el cliente escribió "Jajajaa sisas" a las 17:41:12 y, como la conversación estaba
-`closed`, el ingest **creó otra desde cero** (`5fcca6eb`, v1, sin historial) y el bot se presentó de
-nuevo: "¿Cómo vas, Juan? ¿En qué te puedo ayudar hoy?" — a un cliente que acababa de comprar y
+**reinicia** al bot en vez de silenciarlo. El operador pulsó el botón a las 17:38:38 (`sale_closed`);
+el cliente escribió un mensaje corto a las 17:41:12 y, como la conversación estaba `closed`, el
+ingest **creó otra desde cero** (v1, sin historial) y el bot saludó de nuevo, usando el nombre de
+pila y ofreciendo ayuda — a un cliente que acababa de comprar y
 mientras el operador atendía a mano. Idéntico al 2026-08-19 con otra clienta: once días, dos ventas,
 mismo comportamiento. El guard de contenido ilegible no aplica aquí ni podría (el disparador es texto
 legible). Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
@@ -289,7 +332,7 @@ Riesgo: [ADR] (toca ADR-009/P23) + [B] + [N8N].
 (ADR-008). No existe ninguna validación de `shipping_address`. En `agent_action.py` el campo aparece
 solo en `STRATEGY_FIELDS` y en `_USER_CONFIRMATION_REQUIRES`: el gate exige que **esté presente**,
 nunca que sea válido.
-**Evidencia**: 2026-08-26 21:55:51, una clienta envió `calle46a58e37` — sin separadores, indespachable.
+**Evidencia**: 2026-08-26 21:55:51, una clienta envió `<dirección>` — sin separadores, indespachable.
 En ese caso concreto no llegó a persistirse porque el LLM ni siquiera la extrajo (ese es el problema
 hermano, ver P12), pero de haberlo hecho se habría guardado tal cual y habría contado para
 `user_confirmation`: la venta habría quedado lista para cerrar con una dirección a la que nadie puede
@@ -301,6 +344,70 @@ cuando ya se cobró. El teléfono tiene gate desde ADR-008; la dirección no tie
 repetir el error del gate de teléfono: valida FORMA, no veracidad, y eso se decidió a conciencia.
 Probablemente basta empezar por normalizar y devolver el resumen para confirmación explícita.
 Riesgo: [B] acotado si es solo forma; [ADR] si entra un proveedor externo.
+
+### P31 · Silencio post-venta: el bot contesta al cliente que acaba de comprar (registrado 2026-09-01)
+**Qué**: cerrar la venta deja la conversación en `closed`, y el siguiente mensaje del cliente abre una
+conversación NUEVA en `active` que el bot contesta — justo mientras el operador atiende a mano. No es
+que el bot se re-presente (el seed desde `profile` funciona y usa el nombre): es que **no sabe que
+acaba de haber una venta** y no existe forma de callarlo.
+**Evidencia (2026-08-26)**: `sale_closed` a las 17:38:38 UTC; el operador escribe por WhatsApp entre
+17:38:09 y 17:40:01 (4 echoes, execs 11153, 11165, 11170, 11174); el cliente escribe un mensaje corto
+a las 17:41:12 y el bot le contesta a las 17:41:22 desde una conversación nueva, en `v1`, sin
+historial.
+**Corrección al diagnóstico del 08-29**: registró dos ocurrencias, pero **solo una sigue siendo
+alcanzable**. La del 08-19 la disparó un audio con `content` vacío, y hoy el guard de
+contenido ilegible la suprime — verificado con el `revoke` del 08-29 (exec 11435: `should_respond:
+false`, `reason: unreadable_content`, 0,12 s, sin llamada al LLM). La del 08-26 la disparó texto
+legible: el guard no aplica ni podría.
+**Por qué frente propio y no parte de P29**: es la mitad barata y de mayor confianza. Una ventana
+temporal en el ingest ("si la última conversación de este cliente cerró hace menos de N, persistir y
+suprimir") es backend puro, no toca n8n, y ataca el momento exacto en que el humano está escribiendo.
+El mecanismo general de presencia de operador sigue siendo P29.
+**Toca una consecuencia aceptada de ADR-009 §4** ("`closed` cierra la VENTA, no la RELACIÓN; el
+siguiente mensaje abre una conversación nueva en `active`"). La decisión de cerrar sigue siendo
+correcta; el supuesto de que ese mensaje siguiente es una próxima venta no lo es. Nota as-built, salvo
+que se prefiera un estado explícito, y entonces ADR.
+Riesgo: [B] acotado.
+
+### P32 · Placeholder de medios en el historial (mitad útil de P16, registrado 2026-09-01)
+**Qué**: `recent_messages` entrega `content: ""` cuando lo que llegó fue una imagen o un audio
+(`ingest.py:419-434`), así que el LLM razona sobre un diálogo al que le falta el artefacto. Con el
+guard, el bot ya no responde AL medio; sigue **contradiciendo** al cliente que lo mandó.
+**Evidencia (2026-08-26)**: el cliente envía el comprobante de pago a las 17:37:27 y **64 segundos
+después el bot le pide el comprobante** ("Cuando realices el pago, no olvides enviarme el
+comprobante"), disparado por un mensaje de agradecimiento posterior del propio cliente.
+**El fix no requiere bajar bytes**: un placeholder por tipo en el historial ("[el cliente envió una
+imagen]", "[el cliente envió una nota de voz]") más una línea de directive cuando el medio llega
+después de `user_confirmed`. Es 100 % backend, no toca el `master`, no toca la ventana de 301 s, y de
+paso permite decir "no puedo escuchar notas de voz, ¿me lo escribes?" en vez de callar.
+**Se separa de P16 a propósito**: aquella queda como la descarga de bytes, cara y con material real
+del 5,3 % del inbound; esta es barata y ataca el daño que el guard no evita.
+Riesgo: [B] acotado.
+
+### P33 · Orden entre migración y despliegue (registrado 2026-09-01)
+**Qué**: las migraciones se aplican a mano y el CI despliega solo al mergear a `main` cuando cambia
+`sales_agent_api/**`. Nadie declara cuál de las dos cosas va primero, y para la 013 la respuesta es
+**distinta según la sección**.
+**Evidencia**: el ORM de la rama de ADR-010 declara `order_summary_fingerprint` y
+`order_summary_sent_at` (`models/core.py:193-194`); producción **no tiene esas columnas** (verificado
+2026-09-01). Si esa rama se mergea antes de aplicar la 013, cada `select(Conversation)` falla: el 100 %
+de los turnos devuelve 500, `POST Ingest Message` lo traga por `continueOnFail`, y **todas las
+ejecuciones se marcan `success`**. Es la deuda #12 amplificando un fallo total.
+**Las tres secciones de la 013 tienen restricciones opuestas**: el DDL debe ir **antes** del
+despliegue; la cirugía del `system_prompt_template` debe ir **después**, porque si el prompt deja de
+enseñar a redactar el resumen y el código todavía no lo renderiza, nadie lo manda. El brief de ADR-010
+dice "aplicar 013 y desplegar", en ese orden y sin distinguir secciones.
+**Precedente que sí lo resolvió**: la 012 se diseñó retrocompatible a propósito y lo dejó escrito en su
+encabezado.
+**Alcance**: separar la 013 en dos migraciones (DDL en una, datos y prompt en la siguiente, numeración
+secuencial como siempre) y escribir la regla en un ADR corto — cada migración declara si va antes o
+después del despliegue, y por qué. El CI no cambia.
+**✅ HECHO (2026-09-04)**: la regla es `ADR-012`; la 013 se partió en
+`013_add_order_summary_state.sql` (DDL, ANTES) y `014_shipping_rules_and_summary_prompt.sql`
+(datos y prompt, DESPUÉS), con el SQL movido sin tocar un byte y la suite en verde; el DDL quedó
+aplicado en prod a las 02:09:28 UTC. **Ya no bloquea el merge de ADR-010.** Queda como frente
+abierto solo para el resto de migraciones: el campo `-- Orden:` se exige de la próxima en adelante.
+Riesgo: [ADR] + [DB].
 
 ---
 
@@ -335,8 +442,8 @@ Se le asigna número aquí (ver la regla añadida en "Notación").
 que depende de que la lazy-compaction viva — deuda #7, rota en producción durante meses.
 **Habilitador de producto, no solo deuda**: sin esta tabla no existe el concepto "carrito
 abandonado", y por tanto P27 (campañas) no tiene sobre qué disparar. Es precondición dura.
-**Evidencia nueva (2026-08-19)**: pedido real de 4 bolsas (~$160.000, conv `1deb5fda`,
-"Lodge P. V.") murió a mitad de flujo tras una pregunta de permiso del bot. Hoy ese carrito
+**Evidencia nueva (2026-08-19)**: un pedido real de 4 bolsas (~$160.000) murió a mitad de flujo
+tras una pregunta de permiso del bot. Hoy ese carrito
 no existe para ninguna pieza del sistema: 41 conversaciones `active` históricas y ninguna
 señal de "abandonada". Es el mejor caso concreto de este frente hasta la fecha.
 **No es resucitar `leads`/`orders`** (ADR-004 sigue vigente): entidad nueva, propósito
@@ -395,11 +502,6 @@ duplicados, imagen duplicada). La 007 dropeó `idempotency_key` y no se repuso.
 una campaña duplicada es dinero real, quality rating y una queja regulatoria.
 Riesgo: [ADR] + [DB] + [B] — toca schema + hot path.
 
-### P5 · Manejo de errores 409/5xx en n8n (remedia deuda #12)
-**Qué**: n8n no maneja el 409 (strategy_version stale) ni 5xx del backend. Un 409 hoy =
-drop silencioso del turno. Relacionado con deuda #3 (fallas silenciosas).
-Riesgo: [N8N].
-
 ---
 
 ## 🟢 ABIERTOS — higiene, intercalar entre fixes
@@ -409,28 +511,17 @@ Riesgo: [N8N].
 borrado (`_PAYMENT_CONFIRMATION_REQUIRES`, gate de pago). Barrer qué quedó colgando.
 Riesgo: [B], bajo. Hacer entre fixes.
 
-### P18 · Diagnóstico de datos legacy (pendiente desde el fix de venta duplicada)
-**Qué**: SELECT read-only: cuántas conversaciones tienen `payment_confirmation` en
-contexto / estado viejo, cuáles reales vs. prueba. Decide si limpiar es "borrar 1 fila" o
-"reconciliar N ventas reales mal registradas". NO asumir que es solo la fila de prueba.
-**Diagnóstico HECHO (2026-08-19, SELECT contra prod)**: solo 2 conversaciones con
-`payment_confirmation`, ambas `closed` y legítimas — el e2e `9635…` (07-20) y la venta real
-`7be24ff4` (08-01). No hay filas en estado inconsistente; el caso "legado en human_handoff"
-de la nota de ADR-009/P19 ya no existe en datos. Queda solo la limpieza puntual del
-`purchase_count: 2` del e2e (pendiente de P11).
-Riesgo: read-only ✓ hecho; queda un UPDATE puntual aprobado por humano.
-
-### P19 · Mensaje engañoso de Telegram (caso legado)
-**Qué**: el callback dice "ya estaba confirmada y cerrada" cuando en el caso legado la
-conversación no cerró. Cosmético. Anotado en notas as-built de ADR-009.
-Riesgo: [N8N], menor. Resolver junto con P18 si hay filas legacy.
-
 ### P9 · Microfixes n8n
 **Qué**: `latency_ms` real en "Validate and Prepare Action" (hoy 0 hardcodeado); evaluar
 subir el `slice(-10)` a los 20 mensajes que el backend ya manda (hoy descarta la mitad del
 historial disponible).
 **Se despacha junto con P5** para tocar el workflow vivo una sola vez, con export antes y
 después al repo.
+**Dato nuevo (2026-09-01)**: el export del repo **ya no es el workflow vivo**. `cafe_arenillo_v2`
+tiene `updatedAt: 2026-08-29T23:38:06Z` y `n8n_workflow/cafe_arenillo_v2.json` es del 08-18. El diff
+funcional es nulo (dos nodos Telegram perdieron `resource`/`operation`, que n8n rellena por default),
+pero el archivo que este roadmap declara «único respaldo, n8n no tiene historial de versiones» dejó de
+ser byte-idéntico y no consta quién lo editó. **Re-exportar los tres workflows antes de tocar nada.**
 Riesgo: [N8N], bajo.
 
 ### P20 · Documentación fuera de git
@@ -570,11 +661,17 @@ comparación exacta de texto. Ese detector se registró en su momento como "cand
 solo frente con dos identificadores, ninguno válido. Aquí queda unificado como P10, porque
 "turnos sin progreso del DAG" y "repetición semántica" ya eran dos de sus señales. Detalle
 del caso no cubierto: `docs/registros/registro-P8-limitaciones.md`.
-**Estado**: diseñado, no implementar aún. Excepción posible: la señal de velocidad si la
-amenaza se materializa. P8 (circuit breaker por 3 idénticos) ya cubre el caso trivial.
-**ADR-010 pendiente de escribir**: este roadmap lo daba por "diseñado", pero no existe
-ningún `ADR-010-*.md` en `docs/decisions/` (el índice llega hasta 009). El diseño vive en
-esta entrada; falta convertirlo en decisión escrita antes de implementar.
+**Estado**: diseñado, no implementar aún. **La amenaza ya se materializó dos veces, y el breaker
+bastó las dos** (verificado 2026-09-01): el bot de vuelos del 07-18 y un bot de soporte de
+telecomunicaciones el 08-15 (28 inbound en 4 minutos, 16 outbound, breaker a las 14:06:28 UTC). Dato que encoge el frente todavía más: **23 de esos 28 inbound eran ilegibles**
+(16 `unsupported`, 7 `image`), así que con el guard de contenido ilegible —vivo desde el 08-23— ese
+episodio produciría 5 turnos en vez de 28. El guard desactivó la mayor parte del único caso observado
+de P10 sin proponérselo.
+**Su ADR sigue por escribir, y ya NO es el 010.** El número 010 lo tomó el ADR del resumen del pedido
+(`ADR-010-backend-gobierna-resumen.md`, frente P15, escrito el 2026-08-23 en la rama
+`feat/adr-010-backend-gobierna-resumen`, pendiente de merge). Se aplica el precedente de ADR-008: el
+ADR que efectivamente se escribe toma el número. P10 tomará el siguiente libre cuando se escriba; el
+diseño vive por ahora en esta entrada.
 Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
 
 ---
@@ -598,8 +695,14 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
   (`OPERATOR_ONLY_FIELDS`), así que el escenario del gate ya no puede existir. Los tests se
   conservan como regresión.
 - **P2 · ORDER_FIELDS** (quantity/grind/roast se persisten; registro de compra con quantity/total).
-- **P4 · Observabilidad de compaction** (dejó de fallar en silencio; causa raíz aún pendiente
-  de leer del log de prod — sub-abierto menor).
+- **P4 · Observabilidad de compaction** (dejó de fallar en silencio).
+  **Causa raíz encontrada el 2026-09-01, 80 días después**: la clave de OpenAI del backend es
+  inválida. `AuthenticationError: 401 invalid_api_key` sobre el secreto de OpenAI en Key Vault,
+  capturado justamente por el ERROR con traza que P4 instaló — log de consola del backend del
+  **2026-08-30T21:53:34.869Z**, `conversation_summary.py:220`. Era la **candidata 2** del
+  `diagnostico-2026-06-14-P4-compaction.md`. n8n llama a OpenAI con otra credencial, y por eso el bot
+  conversa mientras la memoria muere en silencio. **El fix es rotar el secreto, no código.** Hasta
+  que se rote, la deuda #7 sigue abierta: 0 de 39 `client_users` con `last_conversation_summary`.
 - **ADR-008 · Multiidioma + teléfono** (detección de idioma en backend; validación E.164-laxa).
 - **ADR-009 · Lazo de handoff** (endpoint confirm-payment + auth escopada + Telegram +
   corte de respuesta n8n + registro de venta + cierre a closed). Probado e2e.
@@ -613,6 +716,16 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
   dato; cuando el flujo llegue a la dirección volverá a pedírsela, justo lo que el prompt prohíbe
   ("nunca se lo vuelvas a pedir"). Ver P30 y
   `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
+- **P18 · Diagnóstico de datos legacy** — el diagnóstico se hizo el 08-19, y **la limpieza que quedó
+  anotada como pendiente ya estaba hecha**: el `audit_log` registra `profile_corrected` (`operator`,
+  2026-07-31 20:31:19 UTC, `purchase_count_before: 2 → after: 1`, PR #57). El `purchase_count: 2` que
+  hoy tiene ese `client_user` son **dos compras distintas y legítimas** (07-20 y 08-01), no el
+  duplicado. Las
+  4 conversaciones con `payment_confirmation` están las 4 en `closed`. Cerrado sin trabajo pendiente
+  (verificado 2026-09-01).
+- **P19 · Mensaje engañoso de Telegram** — **cerrado sin implementar**: dependía de que existieran
+  filas legadas (pago en contexto con la conversación aún en `human_handoff`) y no existe ninguna. Las
+  2 conversaciones en `human_handoff` no tienen pago en contexto (verificado 2026-09-01).
 - **Infra · minReplicas 0→1** (eliminó cold starts que perdían mensajes).
 - **P1 · Drift de docs** (CLAUDE.md, n8n CLAUDE.md sincronizados con la realidad).
 
@@ -620,49 +733,65 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
 
 ## Orden sugerido de cierre (revisable)
 
-Criterio único: **un sistema de ventas que funcione**. Primero deja de perder clientes,
-después deja de mentir sobre el estado de la venta, después baja el costo de verificar, y
-solo entonces agrega capacidad nueva. Nada de P22–P27 se abre antes del punto 5.
+Criterio único: **un sistema de ventas que funcione**. Primero deja de perder clientes, después deja
+de mentir sobre el estado de la venta, después baja el costo de verificar, y solo entonces agrega
+capacidad nueva.
 
-1. ~~**P14** (LID/privacidad)~~ — ✅ CERRADO, verificado e2e (08-18) y con cliente real
-   (08-19). Quedan las preguntas a Chakra anotadas en la entrada (medios, facturación
-   2026-10-01) — hacerlas junto con P16.
-2. ~~**Fix puntual deuda #13**~~ — ✅ HECHO (2026-08-23, rama
-   `feat/allowlist-contenido-ilegible`), junto con el guard de contenido ilegible que
-   dependía de él: el guard suprime el turno por el mismo camino que reventaba con 500, así
-   que el contrato tenía que arreglarse primero. Pendiente de merge y despliegue.
-3. **P15** (user_confirmation) — hermano del bug cerrado; diagnóstico primero. Su evidencia
-   ya no es hipotética (aviso falso al operador el 08-19). Incluye decidir si el gate exige
-   `product_id` (H6 del postmortem).
-4. **Decidir P28 y P29** (una sesión de razonamiento, sin código): P28 porque el punto de
-   pago quedó demostradamente sin gobierno (la "llave 1234"); P29 porque el operador ya
-   está interviniendo en vivo y el bot no se entera. Si no se abren ya, al menos decidir la
-   mitigación quirúrgica de P21 (medios de pago al directive) y dejarla hecha.
-5. Decidir si **P16** (medios ciegos) entra ya. Dato nuevo: 15,6% del inbound histórico es
-   invisible, y hoy costó la identificación del producto de una venta real, no solo el
-   comprobante.
-6. Intercalar **P17** (código muerto), ~~P18~~ (diagnóstico ✅ hecho 08-19; queda el UPDATE
-   puntual del e2e), **P19**, y **P5+P9** juntos en un solo toque del workflow — cortos,
-   bajo riesgo.
-   *Intercalable aquí también*: la captura mínima de opt-in comercial (ver P26). Barata
-   hoy, imposible retroactivamente. No es abrir P26; es no perder la base instalada.
-7. **P22** (motor sin LLM) — el primer frente "nuevo" que se abre. Va aquí y no después
-   porque a partir de este punto todo lo que sigue (P21, P24, P7) toca el hot path, y
-   verificar a mano contra producción deja de ser aceptable.
-8. **P24** (`purchase_intents`) — cierra el agujero de la venta que se pierde entre
-   conversaciones. Es el bug de producto más visible que queda tras endurecer el flujo, y
-   además desbloquea P27. Evidencia fresca: el carrito de 4 bolsas del Lodge (08-19).
-9. **P21** (rediseño prompt) como proyecto propio, con P22 ya disponible. **P13** cuando
-   el negocio decida el contenido.
-10. **P23** como DECISIÓN (una sesión de razonamiento, sin código; incorporar la evidencia
-    de P29) → luego **P7** (debounce) y **P6** (idempotencia), cada uno con su ADR.
-11. **P26** completo y **P27** (campañas) — empezando por la versión manual vía operador.
-    No construir motor hasta que el remarketing manual demuestre que convierte.
-12. **P10** (bots) cuando la amenaza se materialice, o antes si aparece abuso real.
+**Revisado el 2026-09-01** contra el sistema vivo (auditoría §10). Qué cambió respecto del orden
+anterior, y por qué: sube al punto 1 rotar la clave de OpenAI, porque cierra la deuda #7 sin escribir
+código; **P5 deja de ser higiene intercalada** y sube, porque es la única forma de enterarse de que el
+sistema falló; **P16 (bytes) y P22 salen de los primeros ocho**, porque son lo interesante y no lo que
+desbloquea ventas; y entran P31, P32 y P33, que son baratos y atacan daño ya observado en clientes
+reales.
 
-**P25** (audio) no tiene posición fija: entra cuando P16 cierre y el negocio confirme que
-los clientes reales mandan notas de voz. Si el dato existe en `messages`, mirarlo antes de
-decidir.
+1. ~~**Rotar el secreto de OpenAI** en Key Vault~~ ✅ **hecho el 2026-09-04**, y verificado contra
+   la API con la petición exacta de la compaction (`json_schema` estricto, HTTP 200). Ojo con el
+   detalle que casi lo deja a medias: la clave nueva se había creado bajo **otro nombre de secreto**,
+   y el backend solo lee el suyo; ya está copiada al que corresponde. **Falta que una revisión nueva
+   la tome** — el secreto se lee una sola vez, al arrancar —, cosa que hace el despliegue del
+   punto 2. Hasta entonces la deuda #7 sigue viva: **0 de 39** clientes con memoria.
+2. **P15 vía ADR-010, en cuatro pasos y en este orden**: ~~aplicar el DDL~~ ✅ (2026-09-04
+   02:09:28 UTC) → **mergear y desplegar** → aplicar datos y prompt (`014`) → verificar en una
+   conversación real. El envío a Manizales quedó confirmado por el negocio. Al mergear: ADR-010
+   pasa a `Accepted`, entra al índice de `docs/decisions/README.md`, y se resuelve ahí la reserva
+   del número 010 para P10. El despliegue **también recoge la clave de OpenAI nueva** (punto 1),
+   porque el backend solo lee el secreto al arrancar.
+3. **P31** (silencio post-venta) — backend puro, ataca el minuto exacto en que el operador atiende.
+4. **P32** (placeholder de medios en el historial) — backend puro, cierra "pidió el comprobante que
+   ya tenía" sin abrir la descarga de bytes.
+5. **P5 + P9** en un solo toque del workflow vivo, con **re-export de los tres workflows antes y
+   después**: el respaldo del repo dejó de ser el vivo el 08-29.
+6. **P29 acotado a echoes**: el `master` deja pasar `message_echoes[]`, el backend los persiste como
+   outbound del operador, y una regla determinista pausa al bot tras un echo. Es la mitad cara de P29
+   y la que evita que el bot contradiga al humano delante del cliente. **Tercera ocurrencia real el
+   2026-08-30**, sobre una conversación que sigue `active`.
+7. **P17** y decisión de **P20**. Sesión corta, entre fixes.
+8. **Medios de pago gobernados por el backend**, como sección nueva de ADR-010 en lugar de abrir P28.
+
+Después, sin fecha ni compromiso: **P21** con la compaction ya viva y el prompt recortado por la
+migración de ADR-010; decisión de **P24** con datos reales de `pending_intent`, que existe desde P2 y
+nunca ha corrido; **P22** re-alcanzado a tests de integración contra Postgres en CI; **P16 bytes**
+solo si el negocio exige el comprobante dentro del sistema; **P26** y **P27** empezando por la versión
+manual vía operador.
+
+### Frentes que NO se abren, y qué se hace con ellos
+
+Auditoría 2026-09-01 §11. El sesgo que más ha costado es acumular diagnóstico más rápido de lo que se
+cierra trabajo; esta tabla es el contrapeso.
+
+| Frente | Qué se hace | Razón |
+|---|---|---|
+| **P28** | **fusionar** en ADR-010 | es la misma decisión sobre otro dato operativo; el título del ADR ya dice "y los datos operacionales" |
+| **P30** | **fusionar** en ADR-010 | el caso del 08-26 fue de extracción (familia P12); el resumen con confirmación explícita es la validación que el negocio necesita hoy |
+| **P23** | **decidir "no por ahora"** y cerrar como decisión | cero 409 en 268 ejecuciones: el problema que resuelve no ha producido un fallo observado. Desbloquea el ADR de P7 sin rediseñar nada |
+| **P7** | **posponer**; extraer solo el microfix del mismo segundo | sin carreras desde el fix del 08-23; el caso texto→imagen ya lo mató el lookahead por contenido |
+| **P6** | **posponer** hasta que exista outbound business-initiated | lo urgente de su alcance (wamid de salida) entra con P5 |
+| **P22** | **re-alcanzar** a tests de integración contra Postgres | los 254 tests existentes ya son puros; los fallos que dolieron vivieron en las costuras con Postgres y n8n, que un motor con stubs no ejercita |
+| **P25** | **posponer** | 5 audios en toda la historia, dos de ellos de prueba; P32 da la salida amable |
+| **P26** (captura mínima de opt-in) | **no intercalar** | capturar consentimiento por extracción del LLM es el bug de P15 otra vez, sobre un dato con consecuencia regulatoria |
+| **P16** (bajar bytes) | **posponer**; su mitad útil es P32 | 5,3 % del inbound es media real, sobre un catálogo de un producto, y obliga a tocar el `master` |
+| **P10** | **aparcar** | la amenaza ocurrió dos veces y el breaker bastó; el guard desactivó 23 de los 28 inbound del caso del 08-15 |
+| **P13**, **P27** | sin cambio | decisión de negocio, y versión manual antes que motor |
 
 ---
 
@@ -676,22 +805,22 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P1 | Sincronizar documentación con la realidad | ✅ | — |
 | P2 | Persistir `quantity`/`grind`/`roast` (ORDER_FIELDS) | ✅ | — |
 | P3 | Cerrar gate permeable de `payment_confirmation` | ✅ *Superseded by ADR-009* | — |
-| P4 | Resucitar la lazy-compaction + hacerla ruidosa | 🟡 causa raíz pendiente | deuda #3, #7 |
-| P5 | Manejo de errores 409/5xx en n8n | ⬜ | deuda #12 |
+| P4 | Resucitar la lazy-compaction + hacerla ruidosa | 🟡 causa raíz encontrada 2026-09-01 (clave OpenAI inválida); falta rotar el secreto | deuda #3, #7 |
+| P5 | Alerta de fallo silencioso en n8n (409/5xx/500) | 🔴 mecanismo corregido 2026-09-01 | deuda #12 |
 | P6 | Idempotencia outbound (texto e imagen) | ⬜ [ADR] | deuda #11 |
 | P7 | Debounce: race + conexión ocupada | ⬜ [ADR] | deuda #2 |
 | P8 | Circuit breaker para loops conversacionales | ✅ | — |
 | P9 | Microfixes n8n (`latency_ms`, `slice(-10)`) | ⬜ | — |
-| P10 | Detección de conversaciones no-humanas + estancamiento del DAG | 🔵 [ADR-010 por escribir] | deuda #10 (remanente) |
+| P10 | Detección de conversaciones no-humanas + estancamiento del DAG | 🔵 [ADR por escribir, ya no el 010] | deuda #10 (remanente) |
 | P11 | Fix venta duplicada — operador única autoridad del pago | ✅ | — |
 | P12 | Captura oportunista de ORDER_FIELDS en el directive | ✅ | — |
 | P13 | Conocimiento curado de café en el prompt | 🔵 decisión de producto | — |
 | P14 | Mensajes con LID/privacidad se pierden en silencio | ✅ verificado e2e + cliente real 2026-08-19 | deuda #3 (parcial) |
-| P15 | `user_confirmation` por interpretación del LLM | 🔴 | — |
-| P16 | Medios entrantes con content vacío (imagen y audio) | 🟡 [ADR] alcance reducido 2026-08-23: el guard de contenido ilegible está hecho; falta la descarga de medios | deuda #13 ✅ |
+| P15 | `user_confirmation` por interpretación del LLM | 🟡 ADR-010 escrito e implementado en rama; falta aplicar la 013 y desplegar | — |
+| P16 | Medios entrantes con content vacío (imagen y audio) | 🟡 [ADR] alcance re-medido 2026-09-01: la media real es 5,3 % del inbound; queda la descarga de bytes, que toca el `master` | deuda #13 ✅ |
 | P17 | Barrido de código muerto post-P11 | 🟢 | — |
-| P18 | Diagnóstico de datos legacy | 🟢 | — |
-| P19 | Mensaje engañoso de Telegram (caso legado) | 🟢 | — |
+| P18 | Diagnóstico de datos legacy | ✅ | — |
+| P19 | Mensaje engañoso de Telegram (caso legado) | ✅ cerrado sin implementar | — |
 | P20 | Documentación fuera de git | 🟢 | — |
 | P21 | Rediseño del prompt/directive (flujo + tono) | 🔵 | deuda #8 |
 | P22 | Motor ejecutable sin LLM (stubs + escenarios como datos) | 🟡 | deuda #1 |
@@ -702,9 +831,12 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P27 | Motor de campañas outbound (remarketing) | 🔵 bloqueado por P24, P26 | — |
 | P28 | Gobierno de datos operativos en el NLG (llave/medios de pago inventados) | 🔴 registrado, no abierto | — |
 | P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🔴 registrado, no abierto | deuda #14 |
-| P30 | Sin validación de dirección de envío | 🟡 registrado, no abierto | — |
+| P30 | Sin validación de dirección de envío | 🟡 registrado — se propone fusionar en ADR-010 | — |
+| P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | 🔴 registrado 2026-09-01 | deuda #14 (parcial) |
+| P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
+| P33 | Orden entre migración y despliegue | 🟡 ADR-012 escrito y la 013 partida y aplicada 2026-09-04; queda exigir `-- Orden:` en las próximas | — |
 
-**Siguiente número libre: P30.**
+**Siguiente número libre: P34.**
 
 ---
 

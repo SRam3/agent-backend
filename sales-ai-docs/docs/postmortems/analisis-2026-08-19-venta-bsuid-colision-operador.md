@@ -1,5 +1,10 @@
 # Análisis — Venta del 2026-08-19: primera clienta BSUID real, confirmación falsa y colisión bot/operador
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 **Fecha del análisis**: 2026-08-19 (mismo día) · **Ventana**: 19:35–19:45 UTC (14:35–14:45 Bogotá) · **Analista**: cofounder AI + testimonio del operador
 
 **Convención de evidencia**: `exec NNNN` = ejecución de n8n (`cafe_arenillo_v2`) leída completa; toda afirmación con timestamp UTC está confirmada contra las ejecuciones de n8n o con SELECT read-only contra la Postgres viva (se indica cuál). Lo que viene del testimonio del operador se marca como tal. PII enmascarada. `archivo:línea` = verificado en el repo.
@@ -12,18 +17,18 @@
 
 Hubo **dos conversaciones simultáneas**, entrelazadas minuto a minuto:
 
-| | Clienta "M. O." | "Lodge P. V." |
+| | Clienta A | Cliente B |
 |---|---|---|
-| conversation | `90aa2b87…` | `1deb5fda…` |
-| client_user | `59cd973e…`, **creado hoy** | `8d47e191…`, creado **2026-06-12** |
-| Identidad | `bsuid CO.…5687`, `phone_number NULL` — **privacidad de número activada** | `phone 57…4465`, `bsuid` vacío (fila pre-P14, fallback por teléfono) |
+| conversation | `conv-08-19-a` | `conv-08-19-b` |
+| client_user | `cliente-08-19-a`, **creado hoy** | `cliente-06-12`, creado **2026-06-12** |
+| Identidad | `bsuid CO.…`, `phone_number NULL` — **privacidad de número activada** | `phone <teléfono>`, `bsuid` vacío (fila pre-P14, fallback por teléfono) |
 | Resultado | Venta cerrada **por el operador a mano**; sin registrar en el sistema | Pedido de 4 bolsas **colgado** en v6 |
 
-**M. O. es el primer cliente real del camino P14 completo.** Sin las fases 3/4, su "Buenas tardes" habría sido la exec 9459 otra vez: drop de 15 ms, y jamás nos enteramos de que una clienta recurrente quiso comprar de nuevo.
+**La clienta es el primer cliente real del camino P14 completo.** Sin las fases 3/4, su "Buenas tardes" habría sido la exec 9459 otra vez: drop de 15 ms, y jamás nos enteramos de que una clienta recurrente quiso comprar de nuevo.
 
 El operador (Sebastian) recibió el aviso Telegram de "venta lista para cerrar" (19:42:27) y **entró a escribir por WhatsApp desde ~19:42, sin pulsar el botón**, porque —cita— "vi el bot muy perdido".
 
-## 1. Línea de tiempo reconstruida (M. O., con los mensajes del operador intercalados)
+## 1. Línea de tiempo reconstruida (la clienta, con los mensajes del operador intercalados)
 
 Los mensajes del operador (columna 🧑) vienen de su testimonio con hora local; **no existen en `messages` ni en ningún log** — el sistema fue ciego a ellos. El bot (🤖) razonó todo el tramo final sobre un diálogo al que le faltaba la mitad.
 
@@ -39,7 +44,7 @@ Los mensajes del operador (columna 🧑) vienen de su testimonio con hora local;
 | 19:40:51–19:41:17 | clienta | "¿Cuándo entregan las bolsas?" / "¿Hoy es el domicilio?" / "Entiendo" | 🤖 misma respuesta enlatada 2×, re-pide nombre 3× — dos outbound idénticos consecutivos (19:41:26/19:41:33): **a uno del circuit breaker** |
 | 19:41:25 | clienta | "Cra ** * ** - **" (¡la dirección!) | `extracted_data: {}` — **slot ofrecido, no capturado** (exec 10560) |
 | 19:41:31 | clienta | "Barrio E. C." | **HTTP 500 del ingest** (contrato debounce roto, exec 10566); n8n lo traga en silencio |
-| 19:41:35–:55 | clienta | nombre → teléfono `***8227` | ✓ capturados; nótese: se le pidió el teléfono a una clienta que lo oculta |
+| 19:41:35–:55 | clienta | nombre → teléfono `<teléfono>` | ✓ capturados; nótese: se le pidió el teléfono a una clienta que lo oculta |
 | 19:42:07–:19 | clienta | "Si" → "Manizales + dirección" | segundo 500-debounce (exec 10600) |
 | 19:42:23 | clienta | "Barrio E. C." (repite) | 🤖 recupera city+address del historial ✓ **pero extrae `user_confirmation: true`** → gate acepta → `checkpoint_completed:user_confirmed` (audit 19:42:32) → **Telegram con botón (19:42:27)** → y recién DESPUÉS manda el resumen "¿Todo bien con esos datos?" |
 | ~19:42 | 🧑 | **"Manizales?" · "Listo Monica confirmado."** | El operador entra. El sistema no lo sabe. Conversación sigue `active` |
@@ -50,12 +55,12 @@ Los mensajes del operador (columna 🧑) vienen de su testimonio con hora local;
 | ~19:44 | 🧑 | "también si quieres puedes bajar" · **"ya te comparto la llave"** | — |
 | 19:44:04 | clienta | **"Compárteme llave por favor"** | Le responde al operador. 🤖 se adelanta: |
 | 19:44:13 | 🤖 | **"La llave para recoger el café es 1234"** | **Alucinación de dato operativo** (exec 10632). La "llave" pedida era la de transferencia; el bot inventó una llave física con valor fabricado — entre la promesa del operador y la llave real |
-| ~19:45 | 🧑 | "mira la llave" · **"302***05"** (la real) · "Muchas gracias" | La clienta recibió DOS llaves: una falsa del bot y una real del humano, con 60 s de diferencia |
+| ~19:45 | 🧑 | "mira la llave" · **"<llave real>"** (la real) · "Muchas gracias" | La clienta recibió DOS llaves: una falsa del bot y una real del humano, con 60 s de diferencia |
 | 19:44:29–:39 | clienta/🤖 | "Mejor con el domicilio" (tragado, exec 10650) / "Listo" → 🤖 "seguimos con el envío… espero comprobante" | Último turno del bot. **Estado final: `active`, v23, `current_checkpoint=product_matched`** (SELECT confirmado) |
 | 19:44:43–19:45:36 | — | 6 webhooks sin contenido (statuses), descartados | — |
 | post-ventana | — | **`operator_confirm_telegram`: 0 ejecuciones.** Venta sin registrar; profile sin `purchases` | La primera venta de julio, repetida — con el mecanismo ya construido |
 
-**Lodge P. V.** (paralela): "Hola" 19:35:52 → "3 libras café en grano" → conversión honesta a 4 bolsas de 340g ✓ → "Y dejarlo en Metropolitan Loft" (19:41:12) → el bot re-pregunta permiso sobre lo que ella acaba de pedir → **silencio**. Pedido de 4 bolsas muerto sin que ninguna pieza del sistema lo note. Además: Lodge tenía conversación previa (2026-06-12) y hoy fue saludado como desconocido — el re-saludo de la deuda #7, otra vez.
+**El segundo cliente** (paralela): "Hola" 19:35:52 → "3 libras café en grano" → conversión honesta a 4 bolsas de 340g ✓ → "Y dejarlo en <edificio>" (19:41:12) → el bot re-pregunta permiso sobre lo que ella acaba de pedir → **silencio**. Pedido de 4 bolsas muerto sin que ninguna pieza del sistema lo note. Además: Lodge tenía conversación previa (2026-06-12) y hoy fue saludado como desconocido — el re-saludo de la deuda #7, otra vez.
 
 ## 2. Hallazgos
 
@@ -110,7 +115,7 @@ Los mensajes del operador (columna 🧑) vienen de su testimonio con hora local;
 
 ### H8 · La venta del Lodge murió en una pregunta de permiso — y nadie lo va a notar
 
-- **Muestra**: conv `1deb5fda` v6 — la clienta ya dijo dónde dejarlo y el bot preguntó "¿Te gustaría que lo dejemos en…?". Cero mensajes después (verificado en `messages`). Pedido: 4 bolsas (~$160.000), `extracted_context = {quantity: 4}`.
+- **Muestra**: conv `conv-08-19-b` v6 — la clienta ya dijo dónde dejarlo y el bot preguntó "¿Te gustaría que lo dejemos en…?". Cero mensajes después (verificado en `messages`). Pedido: 4 bolsas (~$160.000), `extracted_context = {quantity: 4}`.
 - **No determinable**: si la pregunta causó el abandono (n=1) o si retomará.
 - **Cubeta**: la pregunta-permiso **confirma P21** (la misma regla anti-chatbot violada en julio); el carrito muerto e invisible es **la mejor evidencia de P24 hasta hoy** — no existe ninguna señal de "venta abandonada" en el sistema.
 
@@ -141,8 +146,8 @@ Los mensajes del operador (columna 🧑) vienen de su testimonio con hora local;
 | #2 debounce race | Par de outbounds idénticos consecutivos 19:41:26/19:41:33 (2 turnos respondiendo a inbounds a 6 s) | Confirmada otra vez; además deuda #13 (500) |
 | #13 (nueva) contrato debounce | 4×500 hoy; `ingest.py:228` vs response model | Fix puntual, no espera al ADR de P7 |
 | #14 (nueva) operador invisible | 7 mensajes del operador sin rastro en `messages`/logs; bot activo en paralelo | → P29 |
-| bug `message_count` | 90aa2b87: count 54 vs 50 filas (27 inbound×2); 1deb5fda: 14 vs 13 (7×2) | Cuenta cada inbound dos veces, outbound cero (hallazgo (b) de julio, confirmado) |
-| P18 datos legacy | Solo 2 conversaciones con `payment_confirmation`, ambas `closed` y legítimas (e2e `9635…` del 07-20 y venta real `7be24ff4` del 08-01) | **Diagnóstico hecho**: no hay filas inconsistentes; queda solo limpiar el `purchase_count: 2` del e2e (pendiente P11) |
+| bug `message_count` | conv-08-19-a: count 54 vs 50 filas (27 inbound×2); conv-08-19-b: 14 vs 13 (7×2) | Cuenta cada inbound dos veces, outbound cero (hallazgo (b) de julio, confirmado) |
+| P18 datos legacy | Solo 2 conversaciones con `payment_confirmation`, ambas `closed` y legítimas (e2e `conv-07-20` del 07-20 y venta real `conv-08-01` del 08-01) | **Diagnóstico hecho**: no hay filas inconsistentes; queda solo limpiar el `purchase_count: 2` del e2e (pendiente P11) |
 | P16 alcance | 50 inbound vacíos = 15,6% del total (35 unsupported, 12 image, 2 audio, 1 edit) | El agujero es mayor de lo documentado |
 
 ## 5. Refutaciones a los docs vigentes
@@ -155,7 +160,7 @@ Los mensajes del operador (columna 🧑) vienen de su testimonio con hora local;
 
 ## 6. Recomendación operativa inmediata (no requiere código)
 
-**Pulsar el botón del aviso Telegram de las 14:42** para registrar la venta: el endpoint es idempotente y válido desde `active` (ADR-009). Consecuencia conocida: la compra queda sin precio/total (H6) — anotar el total real ($87.000) donde corresponda hasta que P15/P24 lo resuelvan. Si no se pulsa, M. O. queda como "interesada que nunca compró" y su próxima conversación repetirá el "Cliente nuevo" — con el agravante de que la compaction (deuda #7) tampoco va a rescatar nada.
+**Pulsar el botón del aviso Telegram de las 14:42** para registrar la venta: el endpoint es idempotente y válido desde `active` (ADR-009). Consecuencia conocida: la compra queda sin precio/total (H6) — anotar el total real ($87.000) donde corresponda hasta que P15/P24 lo resuelvan. Si no se pulsa, la clienta queda como "interesada que nunca compró" y su próxima conversación repetirá el "Cliente nuevo" — con el agravante de que la compaction (deuda #7) tampoco va a rescatar nada.
 
 ## 7. Preguntas que siguen abiertas
 

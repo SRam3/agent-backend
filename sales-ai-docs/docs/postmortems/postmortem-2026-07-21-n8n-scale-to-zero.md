@@ -1,8 +1,13 @@
 # Postmortem — Mensajes perdidos por scale-to-zero de n8n 2026-07-21
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 - **Tipo**: registro inmutable de un evento real. No se edita.
 - **Fecha del evento**: 2026-07-21
-- **Componente**: Container App de **n8n** (`ca-r8fm-n8n`, RG `rg-r8fm`) — NO el backend.
+- **Componente**: Container App de **n8n** (`<N8N_CONTAINER_APP>`, RG `<RESOURCE_GROUP>`) — NO el backend.
 - **Severidad**: alta (mensajes de cliente perdidos sin rastro ni alerta).
 
 > Nota de carriles: este documento REGISTRA lo que pasó. El fix ya está aplicado en vivo
@@ -12,11 +17,11 @@
 
 ## Resumen
 
-Un cliente real (identificado en WhatsApp como "Jd") escribió dos veces a la línea de Café
+Un cliente real (identificado en WhatsApp como un cliente) escribió dos veces a la línea de Café
 Arenillo. El bot respondió el primer mensaje y **perdió el segundo por completo**: nunca
 generó una ejecución en n8n, nunca llegó al backend, nunca hubo respuesta. La causa es la
 **misma clase de fallo del stand 2026-06-16 (scale-to-zero), pero en un componente que
-aquel fix no tocó**: en junio se puso `minReplicas=1` solo en el backend (`ca-backend`);
+aquel fix no tocó**: en junio se puso `minReplicas=1` solo en el backend (`<CONTAINER_APP>`);
 el Container App de **n8n** quedó en `minReplicas=0` desde siempre. No es regresión: nunca
 estuvo cubierto.
 
@@ -39,7 +44,7 @@ nada".
   Chakra pero NO genera ninguna ejecución en n8n.** Mensaje perdido.
 - `22:23:55` — un mensaje de prueba interno despierta la instancia y responde normal.
 
-**Causa raíz**: `ca-r8fm-n8n` tenía `minReplicas` sin definir (=0) → escalaba a cero tras
+**Causa raíz**: `<N8N_CONTAINER_APP>` tenía `minReplicas` sin definir (=0) → escalaba a cero tras
 ~5 min sin tráfico. Cuando el 2º mensaje llegó (tras 33 min de inactividad), n8n estaba
 frío: durante el cold-start el webhook aún no está registrado (404 / connection-refused)
 y Chakra no reintenta con éxito. El mensaje se pierde sin dejar ejecución, error ni
@@ -52,15 +57,15 @@ ese ID correctamente a `cafe_arenillo`. El 1º lo probó de punta a punta. El pr
 estaba dentro de n8n ni del backend, sino en que el 2º **nunca entró**.
 
 **Evidencia**:
-- `az containerapp show -n ca-r8fm-n8n -g rg-r8fm` → `minReplicas: null`, `maxReplicas: 10`.
+- `az containerapp show -n <N8N_CONTAINER_APP> -g <RESOURCE_GROUP>` → `minReplicas: null`, `maxReplicas: 10`.
 - Log de Chakra con el 2º mensaje ("Qué productos tienes?").
 - Cero ejecuciones de cualquier workflow entre `21:44` y `22:23` UTC en la instancia.
-- Backend (`ca-backend`) en `minReplicas: 1` (rev 47) — el fix de junio sigue intacto,
+- Backend (`<CONTAINER_APP>`) en `minReplicas: 1` (rev 47) — el fix de junio sigue intacto,
   no revirtió.
 
 **Fix aplicado en vivo**:
-`az containerapp update -n ca-r8fm-n8n -g rg-r8fm --min-replicas 1 --max-replicas 1`
-→ revisión `ca-r8fm-n8n--0000009`, Succeeded. Una réplica caliente permanente; cold
+`az containerapp update -n <N8N_CONTAINER_APP> -g <RESOURCE_GROUP> --min-replicas 1 --max-replicas 1`
+→ revisión `<N8N_CONTAINER_APP>--0000009`, Succeeded. Una réplica caliente permanente; cold
 starts eliminados. `maxReplicas` bajado de 10 → 1 a propósito: n8n en **modo regular**
 (sin queue mode) NO debe correr multi-réplica — varias réplicas duplican registro de
 webhooks, ejecuciones y schedule triggers. Reversible.
@@ -73,9 +78,9 @@ El postmortem `postmortem-2026-06-16-stand-publico.md` describió y arregló est
 
 | | Stand 2026-06-16 | Este evento 2026-07-21 |
 |---|---|---|
-| Componente | Backend `ca-backend` | n8n `ca-r8fm-n8n` |
+| Componente | Backend `<CONTAINER_APP>` | n8n `<N8N_CONTAINER_APP>` |
 | Cold start | ~17s: imagen + Python + Key Vault + Postgres + Uvicorn | arranque de n8n + registro de webhooks |
-| Fix aplicado a | `ca-backend--0000036` (`minReplicas=1`) | nunca se aplicó hasta hoy |
+| Fix aplicado a | `<CONTAINER_APP>--0000036` (`minReplicas=1`) | nunca se aplicó hasta hoy |
 | Estado hoy | sigue en `minReplicas=1` (intacto) | estaba en `0` |
 
 El fix de junio fue **solo al backend**. n8n es un Container App aparte con su propio

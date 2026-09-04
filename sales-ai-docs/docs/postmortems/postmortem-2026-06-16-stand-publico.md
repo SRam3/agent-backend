@@ -1,5 +1,10 @@
 # Postmortem — Stand público (experimento con usuarios reales) 2026-06-16
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 - **Tipo**: registro inmutable de un evento real. No se edita.
 - **Fecha del evento**: 2026-06-16
 - **Contexto**: primer contacto del bot con usuarios desconocidos en volumen. Stand
@@ -35,7 +40,7 @@ perdía. Si había una réplica caliente (alguien escribió hace poco), respond�
 **Evidencia**: `KEDAScaleTargetActivated: Scaled from 0 to 1` con `Count: 6`;
 `startup probe failed: connection refused` ×4 durante el arranque.
 
-**Fix aplicado en vivo**: `minReplicas=1` → revisión `ca-backend--0000036`,
+**Fix aplicado en vivo**: `minReplicas=1` → revisión `<CONTAINER_APP>--0000036`,
 Healthy/Running, una réplica caliente permanente. Cold starts eliminados. Reversible.
 
 **Lección**: este fallo no vive en el código — ninguna auditoría de código lo habría
