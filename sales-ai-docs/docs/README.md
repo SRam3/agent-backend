@@ -81,6 +81,31 @@ fecha en su lugar (`brief-audit-2026-06-14-estado-y-plan.md`).
 - `registro-<ID>-<slug>.md` en `registros/` — hechos duraderos sobre un frente que no son
   ni decisión ni incidente (p. ej. limitaciones conocidas de algo ya entregado).
 
+### Convención de anonimización
+
+Los documentos versionados **no llevan** material de clave, nombres de recursos de
+infraestructura, identificadores de plataforma ni datos personales de clientes. Concretamente:
+
+| Qué | Cómo se escribe |
+|---|---|
+| Claves, tokens, valores de secretos | nunca, ni siquiera un fragmento o su longitud |
+| Nombres de secretos del vault | por su rol («el secreto de OpenAI»), no por su nombre |
+| Container App, resource group, Key Vault, host de Postgres, cuenta de registro | `<CONTAINER_APP>`, `<RESOURCE_GROUP>`, `<KEY_VAULT_NAME>`, `<POSTGRES_HOST>`, `<HOST>` |
+| ID de workflow de n8n | `<workflow_id>`; el workflow se cita por su nombre |
+| `phone_number_id`, WABA id, wamid, BSUID | `<phone_number_id>`, `<waba_id>`, `wamid.…`, `CO.…` |
+| Teléfonos, nombres, direcciones, llaves de pago | descritos, nunca transcritos ni «enmascarados» a medias |
+| `conversations.id` y `client_users.id` | etiqueta estable por fecha: `conv-MM-DD`, `cliente-MM-DD`, con sufijo `-a`/`-b` si hay varias el mismo día |
+
+**Sí se conservan**, a propósito: números de ejecución de n8n, timestamps, referencias
+`archivo:línea`, SHAs de commit, números de PR y hashes de contenido como el md5 del prompt. Son
+la moneda de evidencia del repo, no sirven fuera de él, y las ejecuciones expiran solas con la
+retención.
+
+**Dónde no aplica**: el código y el CI necesitan los nombres reales para funcionar
+(`sales_agent_api/app/main.py` nombra el secreto de OpenAI; `.github/workflows/` nombra el Container
+App y su resource group). Sacarlos de ahí es un cambio operativo, no de documentación, y está
+registrado como tal, no como deuda de estilo.
+
 ### Notación de identificadores
 
 `P<n>` = frente de trabajo · `DEUDA #<n>` = problema observado · `ADR-<nnn>` = decisión.

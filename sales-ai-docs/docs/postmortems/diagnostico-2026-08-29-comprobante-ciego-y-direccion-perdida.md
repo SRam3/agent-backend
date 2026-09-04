@@ -1,5 +1,10 @@
 # Diagnóstico — Miércoles 2026-08-26: el comprobante ciego y la dirección perdida
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 **Fecha del diagnóstico**: 2026-08-29 · **Ventana analizada**: 2026-08-26 17:28–17:42 UTC y 21:53–21:57 UTC
 **Disparador**: el dueño reporta que «el bot no se silenció» al recibir un comprobante de pago, que volvió a
 entrar tras cerrarse la venta, y que una segunda clienta envió una dirección incorrecta.
@@ -33,9 +38,9 @@ estaban abiertos, no regresiones suyas.
 
 ---
 
-## 1. La venta de las 12:38 pm — conversación `ba58a211`
+## 1. La venta de las 12:38 pm — conversación `conv-08-26-a`
 
-Cliente: Juan Manuel Holguín. Conversación completa 17:28:25 → 17:38:38 UTC (12:28–12:38 Bogotá).
+Conversación completa 17:28:25 → 17:38:38 UTC (12:28–12:38 Bogotá).
 Cerrada por el operador, `payment_confirmed`, 80 %. `[DB]`
 
 ### 1.1 El guard SÍ silenció el comprobante
@@ -82,13 +87,13 @@ hacer». Silenciar el turno no lo evita.
 ### 1.3 Cerrar la venta reinicia al bot, no lo silencia
 
 ```
-17:38:38.287  sale_closed        operator   ba58a211 → closed     [DB, audit_log]
+17:38:38.287  sale_closed        operator   conv-08-26-a → closed     [DB, audit_log]
 17:41:12      inbound  text      "Jajajaa sisas"
-17:41:15.685  conversación NUEVA 5fcca6eb creada, v1, active      [DB]
+17:41:15.685  conversación NUEVA conv-08-26-b creada, v1, active      [DB]
 17:41:22.085  outbound text      "¿Cómo vas, Juan? ¿En qué te puedo ayudar hoy?"
 ```
 
-Con `ba58a211` en `closed`, el ingest no la puede reutilizar: crea otra desde cero, sin historial. El bot
+Con `conv-08-26-a` en `closed`, el ingest no la puede reutilizar: crea otra desde cero, sin historial. El bot
 se presenta de nuevo a un cliente que acaba de comprar, mientras el operador atiende a mano.
 
 **Es el mismo patrón exacto de la venta del 2026-08-19** (ver
@@ -101,16 +106,16 @@ mecanismo para callar al bot — es exactamente **P29** / deuda #14.
 
 ---
 
-## 2. La dirección de las 4:55 pm — conversación `b5b882c8`
+## 2. La dirección de las 4:55 pm — conversación `conv-08-26-c`
 
-Clienta: Daniela Bolaños (`client_user` `875cf09d…`, bsuid `CO.…9305`, primer contacto 2026-08-26
+Clienta: la clienta (`client_user` `cliente-08-26-c`, bsuid `CO.…`, primer contacto 2026-08-26
 21:53:36 UTC). Conversación `active`, v8, checkpoint `product_matched`, 0 %. `[DB]`
 
 ### 2.1 La dirección no se guardó mal: no se guardó
 
 ```
 21:55:45  inbound   "te paso la dirección"          extracted_data = NULL
-21:55:51  inbound   "calle46a58e37"                 extracted_data = NULL
+21:55:51  inbound   "<dirección>"                 extracted_data = NULL
 21:55:54  outbound  "Claro, pero primero necesito saber en qué ciudad estás…"
                                                     extracted_data = {"grind_preference": "grano"}
 21:56:00  outbound  "¿Me compartes el nombre de la ciudad?"
@@ -127,7 +132,7 @@ Clienta: Daniela Bolaños (`client_user` `875cf09d…`, bsuid `CO.…9305`, prim
 { "shipping_city": "Bello", "grind_preference": "grano" }
 ```
 
-**`shipping_address` no existe.** El LLM nunca extrajo `calle46a58e37`: no llegó a ningún gate, no fue
+**`shipping_address` no existe.** El LLM nunca extrajo `<dirección>`: no llegó a ningún gate, no fue
 rechazada por ninguna validación — se perdió antes. La clienta dio el dato y el sistema lo tiró.
 
 Cuando el flujo llegue al paso de la dirección se la volverá a pedir, algo que el prompt vivo prohíbe
@@ -147,7 +152,7 @@ mismo, la superficie no está cubierta.
 `_USER_CONFIRMATION_REQUIRES` — es decir, el gate exige que el campo **esté presente**, nunca que sea
 válido.
 
-Consecuencia: si el LLM hubiera extraído `calle46a58e37`, se habría persistido tal cual y habría contado
+Consecuencia: si el LLM hubiera extraído `<dirección>`, se habría persistido tal cual y habría contado
 para `user_confirmation`. La venta habría quedado lista para cerrar con una dirección a la que nadie
 puede despachar.
 

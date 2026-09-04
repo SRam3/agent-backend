@@ -1,7 +1,12 @@
 # Diagnóstico — Post-corte del 2026-08-19: los echoes sí llegan, y el silencio tiene forma
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 **Fecha del diagnóstico**: 2026-08-22 (14:53–15:05 UTC) · **Ventana analizada**: 2026-08-19 19:45 UTC → 2026-08-22 15:00 UTC
-**Objeto**: conversación `90aa2b87-a773-4ebb-98e2-436ee515497c` (clienta BSUID `CO.…5687`, `client_user` `59cd973e…fe2ac`)
+**Objeto**: conversación `conv-08-19-a` (clienta BSUID `CO.…`, `client_user` `cliente-08-19-a`)
 **Continúa**: `analisis-2026-08-19-venta-bsuid-colision-operador.md`, que cerró su ventana a las 19:45 UTC.
 
 **Modo de ejecución**: READ-ONLY estricto. Sesión Postgres con `default_transaction_read_only = on` (verificado
@@ -23,20 +28,20 @@ literales.**
 > workflow `master` como una caída de causa desconocida. **No lo es: el dueño apagó el workflow a propósito**, esa misma
 > noche. Lo que sigue conserva la medición (es correcta y sirve para fechar la decisión) pero corrige la lectura.
 
-El workflow `master` (`xUhGoVBRDd4ZTUMdcfTWA`) está en `active: false` **por decisión del operador**, tomada la noche
+El workflow `master` (`<workflow_id>`) está en `active: false` **por decisión del operador**, tomada la noche
 del 2026-08-19. Sigue así al momento de este diagnóstico.
 
 Lo que la telemetría añade a ese hecho conocido:
 
 - `master` es el **único** punto de entrada del pipeline: 247 de 247 de sus ejecuciones son `mode=webhook`.
-  `cafe_arenillo_v2` (`xKtfVQsyYWkwQta9`) figura como `active: true`, pero es un sub-workflow
+  `cafe_arenillo_v2` (`<workflow_id>`) figura como `active: true`, pero es un sub-workflow
   (`executeWorkflowTrigger`, 247/247 `mode=integrated`): **su interruptor es cosmético**. Apagar `master` apaga todo.
 - El apagado es efectivo a nivel de ruta: `GET` al path de producción devuelve
   `404 "The requested webhook … is not registered."`
 - **No hay buffer.** Chakra recibe el 404 y no reintenta. Todo lo que la clienta o cualquier otro haya escrito desde esa
   noche está perdido, sin registro en ninguna parte.
 - El resto de la infraestructura está sana, y conviene dejarlo dicho para descartar el fallo del 2026-07-21: la Container
-  App `ca-r8fm-n8n` corre en la revisión `--0000010` (creada 2026-08-18T12:19:43Z) con `minReplicas = maxReplicas = 1`, y
+  App `<N8N_CONTAINER_APP>` corre en la revisión `--0000010` (creada 2026-08-18T12:19:43Z) con `minReplicas = maxReplicas = 1`, y
   los dos crons horarios siguieron ejecutándose sin fallar hasta `exec 10820` del 2026-08-22T14:00:54Z. **No es
   scale-to-zero.** Es el interruptor.
 
@@ -85,26 +90,26 @@ Payload crudo (`body`), estructura intacta:
   "object": "whatsapp_business_account",
   "entry": [
     {
-      "id": "1915744495846930",
+      "id": "<waba_id>",
       "changes": [
         {
           "value": {
             "messaging_product": "whatsapp",
             "metadata": {
-              "display_phone_number": "5730146*****",
-              "phone_number_id": "1228032993717074"
+              "display_phone_number": "<número del negocio>",
+              "phone_number_id": "<phone_number_id>"
             },
             "contacts": [
               {
-                "profile": { "username": "mony_*****" },
-                "user_id": "CO.…5687"
+                "profile": { "username": "<username>" },
+                "user_id": "CO.…"
               }
             ],
             "message_echoes": [
               {
-                "from": "5730146*****",
-                "id": "wamid.HBgTQ08uMTA1MDE2…",
-                "to_user_id": "CO.…5687",
+                "from": "<número del negocio>",
+                "id": "wamid.…",
+                "to_user_id": "CO.…",
                 "timestamp": "1787177492",
                 "text": { "body": "«saludo del operador», 21 chars" },
                 "type": "text"
@@ -135,8 +140,8 @@ El `Set` whitelist `map_webhook_data_arenillo` del `master` copia 10 campos, y 6
 {"body":{"entry":[{"changes":[{"value":{
   "messages":[{ "from":null, "timestamp":null, "text":{"body":null},
                 "id":null, "type":null, "from_user_id":null }],
-  "contacts":[{ "profile":{"name":null,"username":"mony_*****"},
-                "user_id":"CO.…5687", "wa_id":null }]
+  "contacts":[{ "profile":{"name":null,"username":"<username>"},
+                "user_id":"CO.…", "wa_id":null }]
 }}]}]}}
 ```
 
@@ -189,7 +194,7 @@ Dos correcciones al postmortem del 2026-08-19.
 > **Corrección 2 — El bug del mensaje vacío se repitió a las 22:15:15 UTC**, en una conversación nueva, 35 minutos
 > después de cerrar la venta. Confirmado con evidencia, no inferido.
 
-### 2.1 La conversación `90aa2b87` cambió después del corte `[DB]`
+### 2.1 La conversación `conv-08-19-a` cambió después del corte `[DB]`
 
 | campo | postmortem (19:45) | hoy |
 |---|---|---|
@@ -204,9 +209,9 @@ Dos correcciones al postmortem del 2026-08-19.
 
 ```json
 {
-  "phone":               "***8227",
+  "phone":               "<teléfono>",
   "quantity":            2,
-  "full_name":           "M. O.",
+  "full_name":           la clienta,
   "shipping_city":       "Manizales",
   "grind_preference":    "grano",
   "shipping_address":    "«dirección», 17 chars",
@@ -223,7 +228,7 @@ Dos correcciones al postmortem del 2026-08-19.
 | timestamp UTC | event_type | actor | efecto |
 |---|---|---|---|
 | 21:40:55.097 | **`sale_closed`** | `operator` | `payment_confirmed_by_operator`, `state_changed:active→closed`, `sale_recorded_in_profile` |
-| 22:15:13.204 | `message_ingest` | `system` | ingreso del audio — **conversación nueva** `d7c70f32` |
+| 22:15:13.204 | `message_ingest` | `system` | ingreso del audio — **conversación nueva** `conv-08-19-c` |
 | 22:15:15.143 | `agent_turn` | `agent` | el bot respondió |
 
 El botón se pulsó **dos veces** y la idempotencia aguantó:
@@ -235,16 +240,16 @@ El botón se pulsó **dos veces** y la idempotencia aguantó:
 El workflow `operator_confirm_telegram` tiene exactamente **2 ejecuciones**. El registro previo que decía «0
 ejecuciones» está desactualizado.
 
-### 2.3 Mensajes desde las 19:45: cero en `90aa2b87`, dos en una conversación nueva
+### 2.3 Mensajes desde las 19:45: cero en `conv-08-19-a`, dos en una conversación nueva
 
-`SELECT … FROM messages WHERE conversation_id = 90aa2b87… AND created_at >= '19:45'` devuelve **0 filas** `[DB]`.
+`SELECT … FROM messages WHERE conversation_id = conv-08-19-a AND created_at >= '19:45'` devuelve **0 filas** `[DB]`.
 
-Pero cerrar la venta cerró la conversación, y el siguiente inbound abrió otra desde cero — `d7c70f32-aafd-46bd-b38f-83ab3aa237bc`,
+Pero cerrar la venta cerró la conversación, y el siguiente inbound abrió otra desde cero — `conv-08-19-c`,
 creada 22:15:08.068 UTC, `state=active`, `strategy_version=1`:
 
 | UTC | dir. | tipo | len | content | wamid |
 |---|---|---|---:|---|---|
-| 22:15:00 | inbound | **`audio`** | **0** | **vacío** | `wamid.HBgTQ08u…` → decodifica a `CO.1050165274535687` |
+| 22:15:00 | inbound | **`audio`** | **0** | **vacío** | `wamid.……` → decodifica a `CO.…` |
 | 22:15:15.143 | outbound | `text` | 65 | «Hola, ¿cómo estás? Aquí estoy para ayudarte con lo que necesites.» | `<none>` |
 
 El turno costó **5 739 prompt tokens** en `gpt-4o-mini` para producir un saludo genérico. El wamid del audio confirma
@@ -267,7 +272,7 @@ quién era ella**.
 | 21:40:54 | El dueño pulsa el botón de Telegram. Venta cerrada, perfil actualizado. | `exec 10675` · `sale_closed` |
 | 22:11:32 | El operador escribe «Hola M…, ¿cómo vas?». El echo llega y se descarta. | `exec 10678` · 132 ms · Stop |
 | 22:14:31 | El operador propone la entrega para pasado mañana. El echo llega y se descarta. | `exec 10682` · 189 ms · Stop |
-| 22:15:00 | La clienta responde con una nota de voz. Entra como `content=''`. | `exec 10686` · 9 542 ms · conv nueva `d7c70f32` v1 |
+| 22:15:00 | La clienta responde con una nota de voz. Entra como `content=''`. | `exec 10686` · 9 542 ms · conv nueva `conv-08-19-c` v1 |
 | 22:15:15 | **El bot irrumpe**: «Hola, ¿cómo estás? Aquí estoy para ayudarte con lo que necesites.» | `agent_turn` · 5 739 tokens |
 | 22:15:30 | El dueño vuelve a pulsar el botón. «Ya estaba confirmada. No se duplicó nada.» | `exec 10692` |
 | ≈22:16 | **El dueño apaga el workflow.** No vuelve a ejecutarse nada de WhatsApp. | última ejecución 10691 a las 22:15:19.789Z |
@@ -276,16 +281,16 @@ quién era ella**.
 
 ```
 phone_number:      NULL                  ← camino BSUID puro, como diseñó P14
-bsuid:             "CO.…5687"
-display_name:      "M. O. J"
+bsuid:             "CO.…"
+display_name:      "<nombre>"
 lifecycle_stage:   "customer"            ← promovido desde 'engaged'
 first_contact_at:  2026-08-19 19:36:09.794
 last_contact_at:   2026-08-19 22:15:08   ← lo tocó el audio, no un mensaje real
 
 profile: {
   "city":             "Manizales",
-  "phone":            "***8227",
-  "full_name":        "M. O.",
+  "phone":            "<teléfono>",
+  "full_name":        la clienta,
   "first_name":       "M.",
   "shipping_address": "«dirección», 17 chars",
   "purchase_count":   1,
@@ -294,7 +299,7 @@ profile: {
       "quantity":        2,
       "total":           null,           ← sin precio
       "product_id":      null,           ← el producto nunca se resolvió
-      "conversation_id": "90aa2b87-…-436ee515497c"
+      "conversation_id": "conv-08-19-a-…-436ee515497c"
   } ]
 }
 ```
@@ -324,8 +329,8 @@ de recuperarlo desde el sistema.
 ```json
 "messages": [
   {
-    "from_user_id": "CO.…5687",
-    "id":           "wamid.HBgTQ08uMTA1MDE2NTI3NDUzNTY4NxUUABIYFDRBRUE4RUQ5NzQ5OEMyQzcyRjlDAA==",
+    "from_user_id": "CO.…",
+    "id":           "wamid.…",
     "timestamp":    "1787168215",
     "type":         "image",
     "image": {

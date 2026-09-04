@@ -1,5 +1,10 @@
 # Auditoría v2 — estado actual + revisión viva + plan de trabajo
 
+> **Saneado el 2026-09-04**: se retiraron identificadores de infraestructura y de plataforma,
+> y los datos personales de clientes, según la «Convención de anonimización» de
+> `docs/README.md`. Las conversaciones y los `client_user` se citan con etiquetas estables
+> (`conv-MM-DD`, `cliente-MM-DD`). **El análisis y sus conclusiones no cambiaron.**
+
 **Fecha**: 2026-06-14
 **Brief**: `docs/briefs/brief-audit-2026-06-14-estado-y-plan.md`
 **Modo de ejecución**: READ-ONLY estricto. Sesión Postgres con `default_transaction_read_only = on` (verificado con `SHOW` como primer comando); contra n8n solo `GET /api/v1/workflows[/{id}]` y `GET /api/v1/executions`; contra Azure solo lecturas (`az keyvault secret show`, `az containerapp show/logs`). Cero escrituras, cero archivos del repo modificados durante la auditoría, cero fixes ejecutados.
@@ -24,18 +29,18 @@
 2. **`CLAUDE.md` describe "reset extracted_context si idle 30+ min" en el paso 3 del ingest** — ese código NO existe (`ingest.py:131-177` solo aplica ventana de 24h; ningún reset por idle). Reconfirma el hallazgo previo: DEUDA #10 describe código ficticio.
 3. **`CLAUDE.md` dice "1 transacción" en ingest** — falso: `session.commit()` intermedio en `ingest.py:215` + `asyncio.sleep(5)` en :216 = mínimo 2 transacciones, y el advisory lock se suelta y re-adquiere (`ingest.py:235-238`). Reconfirmado.
 4. **`n8n_workflow/CLAUDE.md` está gravemente desactualizado**: documenta un state machine de 7 estados (`idle/qualifying/selling/ordering/...`), `available_actions`, `proposed_action`, y campos de respuesta (`has_full_name`, `media_url`) que ya no existen — el código real tiene 3 estados (`state_machine.py:13-17`) y el response real es otro (`api/v1/ingest.py:35-47`).
-5. **`master.json` del repo apunta al workflow legacy**: el nodo `cafe_arenillo_workflow` referencia `RnoPSNFG2frdVVll` (master.json:200), pero el master VIVO apunta a `xKtfVQsyYWkwQta9` (cafe_arenillo_v2) `[n8n: GET /workflows/xUhGo…]`. El export está obsoleto.
-6. **`cafe_arenillo_v2.json` del repo no es el workflow** — es un resumen-puntero de 29 líneas. La definición real de 17 nodos solo vive en n8n. Además la URL de Chakra difiere: el repo documenta `…/665932016609209/messages` (cafe_arenillo_v2.json:15) y el vivo usa `…/12280…74/messages` en sus 3 nodos de envío `[n8n]` — el ID de teléfono de WhatsApp cambió y el repo no se enteró.
+5. **`master.json` del repo apunta al workflow legacy**: el nodo `cafe_arenillo_workflow` referencia `<workflow_id>` (master.json:200), pero el master VIVO apunta a `<workflow_id>` (cafe_arenillo_v2) `[n8n: GET /workflows/xUhGo…]`. El export está obsoleto.
+6. **`cafe_arenillo_v2.json` del repo no es el workflow** — es un resumen-puntero de 29 líneas. La definición real de 17 nodos solo vive en n8n. Además la URL de Chakra difiere: el repo documenta `…/<phone_number_id>/messages` (cafe_arenillo_v2.json:15) y el vivo usa `…/<phone_number_id>/messages` en sus 3 nodos de envío `[n8n]` — el ID de teléfono de WhatsApp cambió y el repo no se enteró.
 
 ---
 
 ## 1–5. Re-verificación contra el sistema vivo
 
-**El workflow v2 (backend-governed) es el que corre: CONFIRMADO leyendo el n8n vivo, no asumido.** `master` (`xUhGo…`) y `cafe_arenillo_v2` (`xKtfVQ…`) están `active: true`; el legacy `cafe_arenillo` (`RnoPSN…`) está `active: false` `[n8n: GET /workflows]`. El v2 llama a `POST …/api/v1/ingest/message` y `POST …/api/v1/agent/action` (nodos "POST Ingest Message" y "POST Agent Action", host `ca-backend.****.azurecontainerapps.io`) `[n8n]`.
+**El workflow v2 (backend-governed) es el que corre: CONFIRMADO leyendo el n8n vivo, no asumido.** `master` (`xUhGo…`) y `cafe_arenillo_v2` (`xKtfVQ…`) están `active: true`; el legacy `cafe_arenillo` (`RnoPSN…`) está `active: false` `[n8n: GET /workflows]`. El v2 llama a `POST …/api/v1/ingest/message` y `POST …/api/v1/agent/action` (nodos "POST Ingest Message" y "POST Agent Action", host `<CONTAINER_APP>.****.azurecontainerapps.io`) `[n8n]`.
 
 **Modelo real: `gpt-4o-mini`. Discrepancia resuelta.** El nodo "Build LLM Prompt" usa `config.ai_model` que viene del backend, que lo lee de `clients.ai_model = 'gpt-4o-mini'` `[DB]`. El literal `'gpt-4.1-mini'` que confundía en el primer reporte es solo el **fallback** si el backend no enviara el campo (`[n8n: Build LLM Prompt]`: `const model = config.ai_model || 'gpt-4.1-mini'`). Y los 85 mensajes outbound registran `ai_model_used = 'gpt-4o-mini'`, sin excepción `[DB: SELECT DISTINCT ai_model_used]`.
 
-**Pérdida de contexto entre conversaciones: CONFIRMADA en datos.** El único usuario recurrente (`15d89…`) tiene 2 conversaciones (2026-05-03 y 2026-06-11) y su `profile` está **vacío** — sin `last_conversation_summary`, sin nada `[DB]`. La lazy-compaction (`ingest.py:146-167`) corrió (la conversación nueva se creó) pero no persistió resumen. Detalle en sección 6.
+**Pérdida de contexto entre conversaciones: CONFIRMADA en datos.** El único usuario recurrente (`cliente-recurrente`) tiene 2 conversaciones (2026-05-03 y 2026-06-11) y su `profile` está **vacío** — sin `last_conversation_summary`, sin nada `[DB]`. La lazy-compaction (`ingest.py:146-167`) corrió (la conversación nueva se creó) pero no persistió resumen. Detalle en sección 6.
 
 ---
 
@@ -55,14 +60,14 @@ Y aquí está la prueba dura del bug del filtro: el LLM **sí los extrajo** — 
 
 **`client_users.profile`** (8 filas): solo aparecen `full_name`, `first_name`, `city`, `phone`, `shipping_address` (en 2 usuarios) `[DB]`. **Nunca han existido** `purchases`, `purchase_count`, `last_conversation_summary`, `language`, `communication_style`, `preferences`, `email`. El "contrato" del COMMENT de 008:50-64 está incumplido al 100% en datos. El array `purchases` está vacío en toda la DB — consistente con que `payment_confirmation` nunca se persistió (la única vía que lo escribe es `_merge_profile` con `payment_just_confirmed`, `agent_action.py:298-305`). Nota adicional de código: cuando algún día se escriba, el registro irá **incompleto** — solo `{date, product_id}`, sin `quantity` ni `total` (`agent_action.py:301-304`), porque `quantity` nunca llega al contexto. El bug del filtro y el perfil incompleto son el mismo bug.
 
-**Lazy compaction: muerta en producción, con el caso de prueba perfecto.** Usuario `15d89…`: conversación del 3-may (4 msgs) + conversación del 11-jun 00:37 — gap de 39 días, fuera de la ventana de 24h, `needs_summary()` = true garantizado (profile vacío). Si la compaction funcionara, hoy ese perfil tendría `last_conversation_summary`. Está vacío `[DB]`. El backend sí carga la key al boot (`main.py:42-68`; log de 11-jun 01:49: `"OpenAI key: loaded from Key Vault (openai-key)"` `[az logs]`), así que la causa exacta del fallo a las 00:37 **no es determinable** con la retención de logs actual — pero el diseño garantiza el silencio: `summarize_conversation` traga cualquier excepción y devuelve `None` con un `logger.warning` (`conversation_summary.py:210-215`), y nadie lee esos warnings (DEUDA #3). El bug de re-saludo (DEUDA #7) queda confirmado en datos con causa raíz en la compaction silenciosamente rota.
+**Lazy compaction: muerta en producción, con el caso de prueba perfecto.** Usuario `cliente-recurrente`: conversación del 3-may (4 msgs) + conversación del 11-jun 00:37 — gap de 39 días, fuera de la ventana de 24h, `needs_summary()` = true garantizado (profile vacío). Si la compaction funcionara, hoy ese perfil tendría `last_conversation_summary`. Está vacío `[DB]`. El backend sí carga la key al boot (`main.py:42-68`; log de 11-jun 01:49: `"OpenAI key: loaded from Key Vault (openai-key)"` `[az logs]`), así que la causa exacta del fallo a las 00:37 **no es determinable** con la retención de logs actual — pero el diseño garantiza el silencio: `summarize_conversation` traga cualquier excepción y devuelve `None` con un `logger.warning` (`conversation_summary.py:210-215`), y nadie lee esos warnings (DEUDA #3). El bug de re-saludo (DEUDA #7) queda confirmado en datos con causa raíz en la compaction silenciosamente rota.
 
 ### Idempotencia outbound: cero, con duplicados reales
 
 - **85 de 85 mensajes outbound tienen `chakra_message_id` NULL** `[DB]`. Desde que 007:56 dropeó `idempotency_key`, la única defensa de idempotencia de `messages` (`chakra_message_id UNIQUE`) aplica solo a inbound. Outbound: nada.
-- **Duplicado real #1** (conv `7def8…`, 3-may): saludo idéntico (md5 `daf85…`, "Hola, soy Sebastian de Café Arenillo…") enviado 2 veces con 8.9s de diferencia. Anatomía `[DB]`: inbound 20:49:16 → saludo 20:49:41; inbound 20:49:42 → **mismo saludo** 20:49:49. El segundo turno tenía el primer saludo en su historial y aun así re-saludó — violación de la regla de saludo de 009 + cero dedup del lado del sistema.
+- **Duplicado real #1** (conv `conv-05-03`, 3-may): saludo idéntico (md5 `<hash del saludo>`, "Hola, soy Sebastian de Café Arenillo…") enviado 2 veces con 8.9s de diferencia. Anatomía `[DB]`: inbound 20:49:16 → saludo 20:49:41; inbound 20:49:42 → **mismo saludo** 20:49:49. El segundo turno tenía el primer saludo en su historial y aun así re-saludó — violación de la regla de saludo de 009 + cero dedup del lado del sistema.
 - **Duplicado real #2** (misma conv): dos inbounds a 4s (20:52:02 y 20:52:06) y **ambos** recibieron respuesta (20:52:09 y 20:52:13). El debounce no suprimió el primero: la ventana de `sleep(5)` + el check `created_at > msg_timestamp` (`ingest.py:218-227`) pierde la carrera si el segundo ingest no ha commiteado cuando el primero despierta. Race condition del debounce, evidenciada en datos.
-- **El episodio 19x** (conv `889167…`, 25-abr): el mensaje "Lo siento, pero aquí solo hablamos de café…" aparece **19 veces en 29 minutos**. NO es duplicación técnica — son 35 inbound / 35 outbound apareados `[DB]`: un usuario fuera-de-contexto y el bot respondiendo idéntico 19 veces, 70 mensajes, 0% de progreso, sin ningún circuit breaker. Un loop conversacional que quema tokens y degrada la marca, distinto del bug de idempotencia pero igual de real.
+- **El episodio 19x** (conv `conv-04-25`, 25-abr): el mensaje "Lo siento, pero aquí solo hablamos de café…" aparece **19 veces en 29 minutos**. NO es duplicación técnica — son 35 inbound / 35 outbound apareados `[DB]`: un usuario fuera-de-contexto y el bot respondiendo idéntico 19 veces, 70 mensajes, 0% de progreso, sin ningún circuit breaker. Un loop conversacional que quema tokens y degrada la marca, distinto del bug de idempotencia pero igual de real.
 - **La imagen duplicada NO deja huella en la DB**: `message_type` solo registra `text` (174/174) `[DB]`. El envío de imagen ocurre exclusivamente en n8n ("Send Product Image") y **no se persiste como mensaje**. El sistema es ciego a su propio side-effect — esta es la condición estructural que permite el duplicado (sección 7).
 
 ### Integridad multi-tenant
@@ -93,7 +98,7 @@ Llamada con `response_format: {type: 'json_object'}`, temperatura 0.30 de DB. JS
 
 **Fallas 5xx / backend caído: igual de silencioso.** Ningún nodo HTTP del workflow tiene retry ni error handling; no hay error-workflow global configurado (`settings` del workflow sin `errorWorkflow`) `[n8n]`. DEUDA #3 confirmada en el sistema vivo. Las ejecuciones retenidas (solo 5, todas `success`) no permiten cuantificar la tasa histórica de fallas — **no determinable** con la retención actual, otro síntoma de la misma deuda.
 
-**Detalle**: "Notify Owner WhatsApp" hardcodea el número del dueño (`****8477`, coincide con `business_rules.notification_phone`) en el body del nodo — config duplicada n8n/DB.
+**Detalle**: "Notify Owner WhatsApp" hardcodea el número del dueño (`<teléfono del dueño>`, coincide con `business_rules.notification_phone`) en el body del nodo — config duplicada n8n/DB.
 
 ---
 
@@ -135,12 +140,12 @@ Plan de **remediación** (cero features del north-star; el norte se usa solo com
 
 **P7 — 🔴 Debounce: race + conexión ocupada — requiere ADR previo**
 - Qué: el `sleep(5)` dentro del request ocupa el pool (DEUDA #2) y el check post-sleep pierde la carrera con inbounds no commiteados (`ingest.py:214-232`). El fix real (mover el debounce fuera de la transacción / supersession por `last_message_at` bajo lock) toca el hot path completo del ingest.
-- Evidencia: doble respuesta a inbounds separados 4s `[DB: conv 7def8…, 20:52]`.
+- Evidencia: doble respuesta a inbounds separados 4s `[DB: conv conv-05-03, 20:52]`.
 - Norte: **en tensión si se sobre-diseña** — el resume asíncrono del norte reordenaría esta zona entera; el ADR debe elegir el fix mínimo que no construya infraestructura que luego se deshaga. ADR: sí.
 
 **P8 — 🟡 Circuit breaker para loops conversacionales**
 - Qué: regla determinista en el backend (p.ej. N outbounds idénticos consecutivos → escalar a `human_handoff` o frenar respuesta), nada de LLM.
-- Evidencia: 19 respuestas idénticas en 29 min, 70 msgs, 0% progreso `[DB: conv 889167…]`.
+- Evidencia: 19 respuestas idénticas en 29 min, 70 msgs, 0% progreso `[DB: conv conv-04-25]`.
 - Norte: **neutro** (cuando existan "escenarios como datos", este será uno; no construir ese catálogo ahora). ADR: no, pero la transición automática extra debe registrarse en audit_log como las demás.
 
 **P9 — 🟢 Microfixes n8n**: `latency_ms` real en "Validate and Prepare Action" (hoy 0 hardcodeado, evidencia `[DB+n8n]`); evaluar subir `slice(-10)` a los 20 mensajes que el backend ya manda. Norte: neutro. Va en el mismo cambio que P5 para tocar n8n una sola vez.

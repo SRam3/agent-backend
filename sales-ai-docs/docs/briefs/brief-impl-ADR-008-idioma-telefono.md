@@ -1,7 +1,7 @@
 # Brief de implementación — ADR-008: idioma (Opción B, backend) + teléfono E.164-laxo
 
 > **Sistema REAL (no greenfield)**: backend FastAPI en prod (Azure Container Apps,
-> rev ca-backend--0000040), Postgres con 6 tablas activas (post-007), migración actual
+> rev <CONTAINER_APP>--0000040), Postgres con 6 tablas activas (post-007), migración actual
 > 009. Este brief edita código vivo del repo. NO rediseña nada. NO toca schema.
 >
 > **Dos cambios independientes en un solo objetivo (ADR-008). Van en dos commits

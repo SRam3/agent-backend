@@ -73,7 +73,7 @@ Riesgo de implementación: [B]ackend acotado · [DB] migración · [N8N] workflo
 ### P14 · Mensajes con LID/privacidad se pierden en silencio  ← CERRADO, verificado e2e
 **Qué**: WhatsApp desplegó privacidad de número. Para clientes con privacidad activada,
 Meta omite `from` y `wa_id` y manda solo el **BSUID** (Business-Scoped User ID,
-`CO.1034…`). El workflow validaba `from` con `typeValidation: strict` → rama false → Stop,
+`CO.…`). El workflow validaba `from` con `typeValidation: strict` → rama false → Stop,
 marcado "success" en 15 ms. **Drop 100% silencioso**: sin error, sin alerta, sin registro.
 **Evidencia**: **2026-08-04** (no 08-01 — `timestamp 1785873069` = 14:51:09 COT), clienta
 real escribió "Hola" y se perdió. Ejecución n8n 9459. Único mensaje real de cliente ese
@@ -141,7 +141,7 @@ decodifica a `CO.XXXXXXXXXXXXXXXX`, o sea **la respuesta salió contra el BSUID,
 teléfono**. Fila en prod: `bsuid=CO.XXXXXXXXXXXXXXXX, phone_number=NULL`.
 
 **Validación con cliente real (2026-08-19)**: 24 h después del e2e sintético, una clienta
-real con privacidad activada (`bsuid CO.…5687`, `phone_number NULL`) atravesó el flujo
+real con privacidad activada (`bsuid CO.…`, `phone_number NULL`) atravesó el flujo
 completo — 27 inbound, 23 outbound, todos contra el BSUID — y llegó hasta el punto de pago.
 P14 es el mecanismo que hizo EXISTIR esa venta (antes era la exec 9459: drop de 15 ms).
 Postmortem: `analisis-2026-08-19-venta-bsuid-colision-operador.md`.
@@ -332,7 +332,7 @@ Riesgo: [ADR] (toca ADR-009/P23) + [B] + [N8N].
 (ADR-008). No existe ninguna validación de `shipping_address`. En `agent_action.py` el campo aparece
 solo en `STRATEGY_FIELDS` y en `_USER_CONFIRMATION_REQUIRES`: el gate exige que **esté presente**,
 nunca que sea válido.
-**Evidencia**: 2026-08-26 21:55:51, una clienta envió `calle46a58e37` — sin separadores, indespachable.
+**Evidencia**: 2026-08-26 21:55:51, una clienta envió `<dirección>` — sin separadores, indespachable.
 En ese caso concreto no llegó a persistirse porque el LLM ni siquiera la extrajo (ese es el problema
 hermano, ver P12), pero de haberlo hecho se habría guardado tal cual y habría contado para
 `user_confirmation`: la venta habría quedado lista para cerrar con una dirección a la que nadie puede

@@ -156,7 +156,7 @@ Implementado en PR #54 (endpoint + auth + Telegram + corte n8n) y probado e2e el
 2026-07-20. Ese e2e destapó lo que a este ADR le faltó: **movió la verdad del pago al
 operador pero nunca RETIRÓ la autoridad del camino viejo**. Quedaron dos autoridades vivas
 sobre el mismo hecho y ambas escribieron — la venta se registró DOS veces en el profile
-(conversación `9635…bce7`, `purchase_count: 2`, dos registros idénticos separados 67s:
+(conversación `conv-07-20`, `purchase_count: 2`, dos registros idénticos separados 67s:
 22:45:38 el del LLM, 22:46:45 el del operador). Era exactamente la **alternativa B que
 este ADR rechazó**, siguiendo viva en el código y en el prompt.
 
