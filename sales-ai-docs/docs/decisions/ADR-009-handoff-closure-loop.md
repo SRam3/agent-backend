@@ -199,6 +199,33 @@ legado (pago en contexto con la conversación aún en `human_handoff`) el endpoi
 `already_confirmed` sin cerrar, y el mensaje de Telegram dice "ya estaba confirmada y
 cerrada" — solo aplica a filas anteriores a este fix.
 
+## Notas as-built (2026-09-01) — §4 asumió que el mensaje siguiente es otra venta
+
+La §4 («Cierre y reactivación») decidió que al confirmar el pago la conversación pasa a `closed`, y que
+la reactivación no requiere mecanismo nuevo: «cuando el cliente vuelve a escribir, el find/create
+conversation del ingest crea una conversación NUEVA que nace en `active`. `closed` cierra la VENTA, no
+la RELACIÓN».
+
+**La decisión de cerrar sigue siendo correcta. El supuesto sobre el mensaje siguiente no lo es.** En
+las dos ventas que el botón cerró con cliente real, ese mensaje no fue una próxima venta: fue la misma
+conversación continuando, con el operador escribiendo por WhatsApp en ese mismo minuto.
+
+- **2026-08-19 22:15 UTC**: tras el `sale_closed` de las 21:40, la clienta manda una nota de voz; el
+  ingest abre `d7c70f32` en `v1` y el bot suelta un saludo genérico mientras el dueño cierra la
+  logística a mano. (Hoy el guard de contenido ilegible suprimiría ese turno.)
+- **2026-08-26 17:41 UTC**: `sale_closed` a las 17:38:38; el operador escribe entre 17:38:09 y
+  17:40:01 (cuatro echoes descartados en n8n); el cliente responde «Jajajaa sisas» a las 17:41:12 y el
+  bot le contesta a las 17:41:22 desde `5fcca6eb`, en `v1`, sin historial. **Ese caso sigue vivo**: el
+  disparador es texto perfectamente legible.
+
+El hueco no es de identidad — el seed desde `profile` funciona y el bot usa el nombre del cliente —
+sino que **no existe forma de callarlo** en la ventana posterior al cierre, que es justo cuando el
+humano está atendiendo. Registrado como **P31** (silencio post-venta), con la mitigación acotada a una
+ventana temporal en el ingest; el mecanismo general de presencia de operador sigue siendo **P29**.
+
+Detalle relacionado: el aviso de §2 dice «entra a acompañar y revisar el comprobante», y el operador en
+efecto entra al chat. Lo que este ADR no previó es que entrara **mientras el bot sigue activo**.
+
 ## Cuándo revisar
 
 - Si el volumen de ventas crece al punto de que la revisión manual de comprobantes es

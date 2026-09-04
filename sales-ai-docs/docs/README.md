@@ -109,7 +109,10 @@ docs/
 │   ├── ADR-006-varchar-check-over-enums.md
 │   ├── ADR-007-state-machine-collapse.md
 │   ├── ADR-008-idioma-y-telefono-e164.md
-│   └── ADR-009-handoff-closure-loop.md
+│   ├── ADR-009-handoff-closure-loop.md
+│   ├── ADR-010-backend-gobierna-resumen.md   ← en rama, pendiente de merge
+│   ├── ADR-011-relojes-y-orden-temporal.md
+│   └── ADR-012-orden-migracion-despliegue.md
 ├── briefs/
 │   ├── brief-audit-2026-06-14-estado-y-plan.md
 │   ├── brief-analisis-2026-07-15-primera-venta.md
@@ -118,7 +121,10 @@ docs/
 │   ├── brief-impl-P8-circuit-breaker.md
 │   ├── brief-impl-P11-fix-venta-duplicada.md
 │   ├── brief-impl-P12-order-fields-directive.md
-│   └── brief-impl-ADR-008-idioma-telefono.md
+│   ├── brief-impl-P14-lid-bsuid-final.md
+│   ├── brief-impl-allowlist-contenido-ilegible.md
+│   ├── brief-impl-ADR-008-idioma-telefono.md
+│   └── brief-impl-ADR-010-backend-gobierna-resumen.md   ← en rama
 ├── registros/
 │   └── registro-P8-limitaciones.md
 └── postmortems/
@@ -128,7 +134,11 @@ docs/
     ├── analisis-2026-07-15-primera-venta.md
     ├── diagnostico-2026-07-15-slot-perdido.md
     ├── postmortem-2026-07-21-n8n-scale-to-zero.md
-    └── diagnostico-2026-08-07-notacion-y-nombres.md
+    ├── diagnostico-2026-08-07-notacion-y-nombres.md
+    ├── analisis-2026-08-19-venta-bsuid-colision-operador.md
+    ├── diagnostico-2026-08-22-post-corte-echoes-y-silencio.md
+    ├── diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md
+    └── auditoria-2026-09-01-roadmap-y-planeacion.md
 ```
 
 > `postmortems/` guarda los cuatro tipos de registro inmutable, no solo postmortems; el

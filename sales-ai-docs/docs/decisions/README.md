@@ -82,7 +82,16 @@ Ej: "Cuando tengamos 3+ clientes con catálogo > 50 SKUs."
 | 007 | Colapso de state machine de 7 a 3 estados | Accepted | 2026-04-19 |
 | 008 | Soporte multiidioma e internacional | Accepted | 2026-06-16 |
 | 009 | Cierre del lazo de handoff humano | Accepted | 2026-07-19 |
+| 010 | El backend gobierna el resumen del pedido | Propuesto ⚠️ | 2026-08-23 |
+| 011 | En qué reloj vive cada decisión temporal | Propuesto | 2026-09-01 |
+| 012 | Cada migración declara su orden vs. el despliegue | Propuesto | 2026-09-01 |
 
-> **010 está reservado**, no escrito: el frente P10 (detección de conversaciones no-humanas)
-> tiene el diseño hecho en `docs/ROADMAP.md` y lo referencia como "ADR-010". Convertirlo en
-> decisión escrita es prerrequisito para implementar P10.
+> ⚠️ **El archivo del 010 vive en la rama `feat/adr-010-backend-gobierna-resumen`**, pendiente de
+> merge. Pasa a `Accepted` cuando entre.
+>
+> **El 010 ya no está reservado para P10.** Este índice lo reservaba para el frente P10 (detección de
+> conversaciones no-humanas), cuyo ADR nunca se escribió. Se aplica el precedente de ADR-008: **el ADR
+> que efectivamente se escribe toma el número**. P10 tomará el siguiente libre cuando su decisión se
+> escriba; hoy su diseño vive en `docs/ROADMAP.md`.
+>
+> **Siguiente número libre: 013.**
