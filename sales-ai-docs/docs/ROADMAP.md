@@ -186,9 +186,12 @@ upstream completo.
 **Estado (2026-09-01)**: el diagnóstico está hecho y la decisión escrita. `ADR-010` vive en la rama
 `feat/adr-010-backend-gobierna-resumen` con `services/order_summary.py`, la migración `013` y sus
 tests: el backend renderiza el resumen, calcula el total y solo acepta la confirmación si se cumplen
-cuatro condiciones deterministas. **Falta**: aplicar la 013 y desplegar **en el orden que exige P33**
-(sección 1 antes del despliegue, sección 3 después), y confirmar con el negocio que el envío de
-Manizales baja de $7.000 a $5.000, cosa que la 013 hace y que ningún documento anunció.
+cuatro condiciones deterministas. **Estado del despliegue (2026-09-04)**: la migración se partió en dos (P33) y **el DDL ya está
+aplicado en prod** — `013_add_order_summary_state.sql`, 02:09:28 UTC, `conversations` de 16 a 18
+columnas, aditivo y nullable, con el código viejo corriendo sin novedad. El envío a Manizales a
+$5.000 **queda confirmado por el negocio** (2026-09-03): no era un error de la migración, es una
+bajada deliberada sobre la tarifa de abril. **Falta**: mergear y desplegar, y después aplicar
+`014_shipping_rules_and_summary_prompt.sql` y verificar en una conversación real.
 Riesgo: [B] + [DB].
 
 ### P16 · Medios entrantes llegan con content vacío (sistema ciego a imagen y audio)
@@ -399,7 +402,12 @@ encabezado.
 **Alcance**: separar la 013 en dos migraciones (DDL en una, datos y prompt en la siguiente, numeración
 secuencial como siempre) y escribir la regla en un ADR corto — cada migración declara si va antes o
 después del despliegue, y por qué. El CI no cambia.
-Riesgo: [ADR] + [DB]. **Bloquea el merge de ADR-010.**
+**✅ HECHO (2026-09-04)**: la regla es `ADR-012`; la 013 se partió en
+`013_add_order_summary_state.sql` (DDL, ANTES) y `014_shipping_rules_and_summary_prompt.sql`
+(datos y prompt, DESPUÉS), con el SQL movido sin tocar un byte y la suite en verde; el DDL quedó
+aplicado en prod a las 02:09:28 UTC. **Ya no bloquea el merge de ADR-010.** Queda como frente
+abierto solo para el resto de migraciones: el campo `-- Orden:` se exige de la próxima en adelante.
+Riesgo: [ADR] + [DB].
 
 ---
 
@@ -736,14 +744,18 @@ sistema falló; **P16 (bytes) y P22 salen de los primeros ocho**, porque son lo 
 desbloquea ventas; y entran P31, P32 y P33, que son baratos y atacan daño ya observado en clientes
 reales.
 
-1. **Rotar `openai-key`** en Key Vault y verificar con el próximo cliente recurrente. Cierra la causa
-   raíz de P4 y la deuda #7. Cero código, y es la promesa central del producto: hoy **0 de 39**
-   clientes tienen memoria de su conversación anterior.
-2. **P15 vía ADR-010, en cuatro pasos y en este orden**: aplicar el DDL → mergear y desplegar →
-   aplicar datos y prompt → verificar en una conversación real. Antes de empezar, confirmar con el
-   negocio el envío de Manizales. Al mergear: ADR-010 pasa a `Accepted`, entra al índice de
-   `docs/decisions/README.md`, y se resuelve ahí la reserva del número 010 para P10. **P33 es
-   precondición.**
+1. ~~**Rotar `openai-key`** en Key Vault~~ ✅ **hecho el 2026-09-04**, y verificado contra la API
+   con la petición exacta de la compaction (`json_schema` estricto, HTTP 200). Ojo con el detalle
+   que casi lo deja a medias: la clave nueva se había creado como secreto aparte
+   (`secret-key-arenillo-open-ai`) y el backend lee `openai-key`; ya está copiada. **Falta que una
+   revisión nueva la tome** — el secreto se lee una sola vez, al arrancar —, cosa que hace el
+   despliegue del punto 2. Hasta entonces la deuda #7 sigue viva: **0 de 39** clientes con memoria.
+2. **P15 vía ADR-010, en cuatro pasos y en este orden**: ~~aplicar el DDL~~ ✅ (2026-09-04
+   02:09:28 UTC) → **mergear y desplegar** → aplicar datos y prompt (`014`) → verificar en una
+   conversación real. El envío a Manizales quedó confirmado por el negocio. Al mergear: ADR-010
+   pasa a `Accepted`, entra al índice de `docs/decisions/README.md`, y se resuelve ahí la reserva
+   del número 010 para P10. El despliegue **también recoge la clave de OpenAI nueva** (punto 1),
+   porque el backend solo lee el secreto al arrancar.
 3. **P31** (silencio post-venta) — backend puro, ataca el minuto exacto en que el operador atiende.
 4. **P32** (placeholder de medios en el historial) — backend puro, cierra "pidió el comprobante que
    ya tenía" sin abrir la descarga de bytes.
@@ -822,7 +834,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P30 | Sin validación de dirección de envío | 🟡 registrado — se propone fusionar en ADR-010 | — |
 | P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | 🔴 registrado 2026-09-01 | deuda #14 (parcial) |
 | P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
-| P33 | Orden entre migración y despliegue | 🔴 registrado 2026-09-01, bloquea ADR-010 | — |
+| P33 | Orden entre migración y despliegue | 🟡 ADR-012 escrito y la 013 partida y aplicada 2026-09-04; queda exigir `-- Orden:` en las próximas | — |
 
 **Siguiente número libre: P34.**
 

@@ -605,6 +605,29 @@ sin `audit_log` (§4.5). La deuda **#7 no necesita número nuevo**: necesita su 
 - Si Chakra reintenta entregas fallidas (pendiente desde el postmortem del 07-21).
 - Si `max_natural` atiende clientes reales.
 - Si `15d89710` es la identidad del dueño (§2.12).
+
+### Respuestas recibidas el 2026-09-03, después de entregar esta auditoría
+
+Se anotan aquí en vez de reescribir el cuerpo: el documento es un registro de lo que era
+determinable el 09-01.
+
+- **`max_natural` es un tenant REAL pero todavía no está en operación**: hoy es una prueba. El
+  riesgo de §4.7 no está causando pérdida de clientes ahora, pero **se materializa el día que
+  entre en operación** — su whitelist no copia ningún campo de identidad de P14, así que su primer
+  cliente con privacidad de número se perdería en silencio, la exec 9459 otra vez. Y sigue en pie
+  que su arquitectura (AI Agent con tools) contradice ADR-002.
+- **El envío a Manizales a $5.000 queda confirmado por el negocio**, así que §2.3 se resuelve a
+  favor de la migración: no era un error, es una bajada de precio deliberada sobre la tarifa de
+  abril. Anotada en el encabezado de la migración.
+- **La rotación de la clave de OpenAI sí ocurrió, pero no donde el backend la lee.** Los atributos
+  del secreto, que el 09-01 no se pudieron leer, muestran que `openai-key` seguía en su versión de
+  **2025-06-24**; la clave nueva se había creado como secreto aparte,
+  `secret-key-arenillo-open-ai` (2026-09-04 02:04 UTC). Copiada a `openai-key` el 2026-09-04
+  02:04:06 y 02:05:17 UTC (dos versiones con el mismo hash) y verificada contra la API con la
+  petición exacta de la compaction, `json_schema` estricto incluido: HTTP 200. Eso **descarta
+  definitivamente la candidata 3** del diagnóstico del 06-14 (modelo o structured output) y, junto
+  con el propio 401, la candidata 1 (egress). **Falta que una revisión nueva del Container App la
+  tome**: el backend lee el secreto una sola vez, en el arranque.
 - El mecanismo de poda de ejecuciones de n8n (§2.4).
 - El orden sub-segundo real del cruce del 08-01 (§5.2.3): estructuralmente indeterminable.
 
