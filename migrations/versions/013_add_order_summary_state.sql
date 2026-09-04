@@ -25,7 +25,13 @@
 -- Aditiva y nullable: es segura de aplicar con el código VIEJO desplegado. Esa es justamente
 -- la propiedad que permite aplicarla antes del merge.
 --
--- Applied:
+-- Applied: 2026-09-04 02:09:28 UTC (prod, manualmente vía psql, transacción única con
+--          ON_ERROR_STOP y verificación en la misma sesión: `conversations` pasó de 16 a 18
+--          columnas; las dos nuevas existen y son nullable; 55 conversaciones vivas, 0 con
+--          fingerprint, como corresponde a una migración puramente aditiva. Aplicada ANTES
+--          del despliegue, según el campo `Orden` de arriba y ADR-012: el código entonces
+--          corriendo (revisión ca-backend--0000057, imagen caabe89) no declara estas
+--          columnas y simplemente las ignora.
 
 -- ============================================================
 -- 1. Estado del resumen (DDL)
