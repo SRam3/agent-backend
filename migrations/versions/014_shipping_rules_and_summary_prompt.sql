@@ -1,50 +1,27 @@
--- Migration 013: el backend gobierna el resumen del pedido (ADR-010)
+-- Migration 014: reglas de envío y cirugía del prompt (ADR-010 — parte 2 de 2)
 --
--- Contexto (P15): `user_confirmation` declara un ACTO ("el cliente aceptó su pedido")
--- pero se decidía por un juicio de LENGUAJE sobre un mensaje suelto, sin nada contra
--- qué contrastarlo. Medido sobre el histórico completo (47 conversaciones, 616
--- mensajes): de las 5 veces que se marcó, 4 fueron falsos positivos — 80%. Y ese
--- checkpoint es la única precondición para que el botón del operador registre una
--- venta (confirm_payment.py:78). El 2026-08-19 se materializó: quedó en el perfil de
--- una clienta una compra con product_id NULL y total NULL.
+-- Orden: DESPUÉS del despliegue
+-- Por qué: la sección 2 retira del system_prompt_template la instrucción de redactar el
+--          resumen del pedido. Si entra ANTES de que el código lo renderice, no lo manda
+--          nadie: ni el LLM (ya no sabe que debe) ni el backend (aún no está desplegado).
+--          La venta se estancaría en silencio justo en el paso de confirmación.
+--          Regla general: ADR-012.
 --
--- El hallazgo que decide el diseño: no existía ninguna señal determinista de que el
--- resumen se hubiera enviado. Vivía como texto libre dentro de un response_text que
--- redactó el LLM, así que el backend no sabía que lo había mandado. Esta migración
--- crea ese hecho y retira del prompt las dos responsabilidades que lo impedían.
+-- Segunda mitad de lo que era la migración 013, partida el 2026-09-03 (ver P33 y ADR-012).
+-- La primera mitad (013) es el DDL y va antes del despliegue.
 --
--- Tres secciones, un solo archivo:
---   1. DDL — las dos columnas del estado del resumen (lo único que toca el schema).
---   2. business_rules — reglas de envío y presentación como DATOS.
---   3. system_prompt_template — cirugía quirúrgica, patrón de la 011.
+-- La sección 1 (reglas de envío) es indiferente al orden y viaja aquí para no partir el
+-- cambio en tres archivos.
 --
--- La sección 3 NO es limpieza de prompt: es parte del fix. Mientras el prompt siga
--- enseñando a redactar resúmenes con total, el LLM los redactará en los turnos en que
--- el backend no renderiza (fingerprint sin cambios) y su texto saldrá sin reemplazar.
--- Se volvería a prometer dinero calculado por el modelo.
+-- ⚠️ CAMBIO VISIBLE PARA EL CLIENTE, CONFIRMADO POR EL NEGOCIO EL 2026-09-03:
+--    - Manizales pasa de $7.000 a $5.000 de envío. Es una BAJADA de precio sobre la tarifa
+--      que el bot viene cotizando desde la migración 005 y con la que se cerró la venta del
+--      2026-08-19 ("2 x 40.000 + ~7.000"). Confirmado explícitamente por el dueño.
+--    - Pereira, Armenia, Bogotá, Cali, Bucaramanga, Barranquilla, Cartagena y Santa Marta
+--      PIERDEN su tarifa y pasan a "por confirmar": eran cifras de abril (005) que nunca se
+--      contrastaron contra un envío real. El operador las coordina a mano.
 --
 -- Applied:
-
-
--- ============================================================
--- 1. Estado del resumen (DDL)
--- ============================================================
--- Columnas propias, NO dentro de extracted_context: son hechos PROPIEDAD del backend,
--- no slots propuestos por el LLM. Mezclarlos donde se mergean las propuestas del
--- modelo recrea el riesgo que obligó a inventar OPERATOR_ONLY_FIELDS. Además hace el
--- fingerprint consultable.
-
-ALTER TABLE conversations
-    ADD COLUMN IF NOT EXISTS order_summary_fingerprint VARCHAR(64);
-
-ALTER TABLE conversations
-    ADD COLUMN IF NOT EXISTS order_summary_sent_at TIMESTAMPTZ;
-
-COMMENT ON COLUMN conversations.order_summary_fingerprint IS
-    'sha256 del pedido tal como se presentó (7 campos + envío aplicado). ADR-010.';
-COMMENT ON COLUMN conversations.order_summary_sent_at IS
-    'Cuándo el backend envió ese resumen. Reloj del backend. ADR-010.';
-
 
 -- ============================================================
 -- 2. Reglas de envío y presentación (datos, no código)
@@ -158,7 +135,6 @@ UPDATE clients
 -- Lo que NO se toca, a propósito: la línea de `user_confirmation` en EXTRACCIÓN DE
 -- DATOS. ADR-010 §5 conserva la propuesta del LLM — juzgar si un enunciado es una
 -- afirmación ES tarea de lenguaje. Lo que cambia es CUÁNDO el backend puede aceptarla.
-
 -- Verificación (todas deben devolver 0):
 --   SELECT count(*) FROM clients WHERE id = '00000000-0000-0000-0000-000000000001'
 --     AND (system_prompt_template LIKE '%RESUMEN DE CONFIRMACIÓN%'

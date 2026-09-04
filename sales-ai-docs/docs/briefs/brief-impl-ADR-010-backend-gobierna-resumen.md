@@ -173,7 +173,7 @@ el cliente los menciona, y el directive tiene la instrucción literal *"Do NOT a
 proactively — only capture what they volunteer"* (`goal_strategy.py:80-85`, de P12). El
 único sitio del sistema que hoy empuja a conseguir la cantidad es la sección **RESUMEN DE
 CONFIRMACIÓN** del prompt (`009:225`: *"…Y el cliente ya haya indicado cuántas bolsas
-quiere"*) — y la migración 013 la borra.
+quiere"*) — y la migración 014 la borra.
 
 Con H4 decidido, el resultado sin más cambios sería: **la venta se estanca en silencio.**
 Datos completos, backend esperando `grind_preference` para renderizar, LLM con órdenes de no
@@ -278,7 +278,20 @@ Y **sin guion largo** en ninguna plantilla — hay un test que lo asegura.
 
 ---
 
-## Migración 013
+## Migración: partida en 013 y 014 (2026-09-03)
+
+> **Corrección al plan original.** Este brief pedía una sola migración con tres secciones y
+> aplicarla entera antes de desplegar. **Es incorrecto**: las secciones tienen restricciones de
+> orden opuestas. El DDL debe ir ANTES del despliegue (el ORM ya declara las columnas: sin
+> ellas, el 100 % de los turnos devuelve 500 y n8n lo traga en silencio). La cirugía del prompt
+> debe ir DESPUÉS (si el prompt deja de enseñar a redactar el resumen y el código todavía no lo
+> renderiza, no lo manda nadie y la venta se estanca en silencio).
+>
+> Partida en `013_add_order_summary_state.sql` (DDL, **antes**) y
+> `014_shipping_rules_and_summary_prompt.sql` (datos y prompt, **después**). La regla general
+> quedó escrita en **ADR-012**, y el frente es **P33**.
+
+## Contenido de las dos migraciones
 
 El ADR dice, en §3, que las reglas de envío son "edición de datos, no migración". Eso
 **contradice la convención del repo**: CLAUDE.md exige migración para cambios de
@@ -286,7 +299,7 @@ El ADR dice, en §3, que las reglas de envío son "edición de datos, no migraci
 Sigo la convención del repo — sin archivo, el cambio no es reproducible en otro entorno ni
 auditable. El ADR conserva su punto: no es DDL, y va en el mismo archivo.
 
-`013_backend_gobierna_resumen.sql`, tres secciones:
+Contenido original, ahora repartido:
 
 **1. DDL** (lo único que cambia el schema)
 ```sql
@@ -323,7 +336,7 @@ idempotente con guard `LIKE`):
 
 **Regresión deliberada a verificar**: hoy el bot cotiza Pereira $10.000, Armenia $10.000,
 Bogotá $18.000, Cali $18.000, Bucaramanga, Barranquilla, Cartagena, Santa Marta y un bloque
-de zonas. Con la 013 todas pasan a "por confirmar". Es lo que el ADR decide
+de zonas. Con la 014 todas pasan a "por confirmar". Es lo que el ADR decide
 ("automatizar antes de tener los datos sería inventar tarifas") y son cifras de abril que
 nunca se contrastaron contra un envío real — pero es un cambio visible para el cliente y
 debe anunciarse al negocio antes de aplicar, no descubrirse en una conversación.
@@ -349,7 +362,7 @@ debe anunciarse al negocio antes de aplicar, no descubrirse en una conversación
 - `models/core.py` — las dos columnas nuevas en `Conversation`.
 - `ingest.py:352` — `trigger_message_at` en `strategy_snapshot` (H1).
 - `CLAUDE.md` — sección "DAG gates" (el gate de `user_confirmation` cambia de naturaleza),
-  schema post-013, estado de P15.
+  schema post-014, estado de P15.
 - `docs/ROADMAP.md` — resolver la referencia colgada: hoy `ROADMAP:539-540` y `:640` dan el
   número 010 al ADR de P10, que nunca se escribió. Aplicar el precedente de ADR-008 que el
   propio ADR-010 invoca: 010 queda tomado, P10 toma el siguiente libre cuando se escriba.
@@ -364,7 +377,7 @@ Una sola PR, backend puro. Las fases son de orden de trabajo, no de despliegue.
 históricos. Sin tocar `agent_action` todavía. Al final de esta fase el fix está *probado*
 aunque no esté *conectado*.
 
-**Fase 2 — Migración 013 + modelo + `ingest.py`.** DDL, datos, prompt, columnas ORM,
+**Fase 2 — Migraciones 013 y 014 + modelo + `ingest.py`.** DDL, datos, prompt, columnas ORM,
 `trigger_message_at`.
 
 **Fase 3 — Cableado en `agent_action.py`.** Gate, invalidación, render, reemplazo del
@@ -372,8 +385,17 @@ outbound, side_effects.
 
 **Fase 4 — Prompt/directive y docs.** `goal_strategy`, `prompt_context`, CLAUDE.md, ROADMAP.
 
-**Fase 5 — Aplicar 013 en prod** (manual vía psql, transacción única con verificación de
-longitud del template, como la 011 y la 012) y desplegar.
+**Fase 5 — Despliegue en cuatro pasos, en este orden** (manual vía psql, transacción única con
+verificación, como la 011 y la 012):
+
+1. Aplicar **013** (DDL). Es aditiva y nullable, así que es segura con el código viejo corriendo.
+2. Mergear y desplegar. El CI construye y actualiza el Container App solo.
+3. Aplicar **014** (reglas de envío y prompt), con la verificación de longitud del template.
+4. Verificar en una conversación real: resumen del backend con total correcto, confirmación
+   aceptada solo después, y una corrección que invalida y re-resume.
+
+Invertir 1 y 2 deja producción con el 100 % de los turnos en 500. Invertir 2 y 3 deja la venta
+estancada sin que nadie mande el resumen.
 
 ---
 
@@ -422,9 +444,9 @@ longitud del template, como la 011 y la 012) y desplegar.
 |---|---|
 | Falso negativo por desfase de relojes (H2) | Side_effect propio por esa razón; se mide antes de tocar nada |
 | El resumen renderizado suena robótico en el momento más importante | El ADR lo anticipa: ajustar plantilla, nunca devolverle la redacción al LLM |
-| Ciudades que pierden tarifa cotizada (decidido) | Cambio visible para el cliente: avisar al negocio antes de aplicar la 013 |
+| Ciudades que pierden tarifa cotizada, y Manizales que baja de $7.000 a $5.000 | Cambio visible para el cliente. **Confirmado por el dueño el 2026-09-03**, y anotado en el encabezado de la 014 |
 | H5 sin cerrar → venta estancada sin rastro | El directive pide `quantity`/`grind_preference`; test 11 lo cubre |
-| El LLM redacta su propio resumen en turnos sin render | Se corta en la sección 3 de la 013 (quitar RESUMEN DE CONFIRMACIÓN del prompt) |
+| El LLM redacta su propio resumen en turnos sin render | Se corta en la 014 (quitar RESUMEN DE CONFIRMACIÓN del prompt), que por eso va DESPUÉS del despliegue |
 | n8n manda `send_image_url` en el mismo turno del resumen | El backend no gestiona esa clave (la lee n8n del LLM). Iría foto + resumen juntos. Cosmético; registrar si se ve |
 | Migración manual mal aplicada | Patrón 011/012: transacción única con verificación en el mismo `psql` |
 
@@ -434,8 +456,8 @@ longitud del template, como la 011 y la 012) y desplegar.
 
 - [ ] `pytest` completo en verde (el gate de CI corre la suite entera desde PR #64).
 - [ ] Los 5 casos históricos cubiertos, con el legítimo pasando.
-- [ ] 013 aplicada en prod, con la verificación de longitud del template registrada en el
-      encabezado `-- Applied:`.
+- [ ] 013 aplicada en prod **antes** del despliegue, y 014 **después**, cada una con su
+      verificación registrada en su encabezado `-- Applied:`.
 - [ ] Verificado en una conversación real: resumen del backend con total correcto,
       confirmación aceptada solo después, y una corrección que invalida y re-resume.
 - [ ] Verificado que el bot pide la molienda y la cantidad cuando son lo único que falta
