@@ -27,11 +27,23 @@
 --
 -- SIN ÍNDICE NUEVO, y es decisión explícita, no omisión (§8 pregunta 2 del brief). La consulta
 -- de la pausa filtra por (conversation_id, author, created_at DESC), e `ix_messages_conversation_id`
--- (migración 001) ya la acota a una sola conversación. Con 673 filas en la tabla, el filtro
+-- (migración 001) ya la acota a una sola conversación. Con 719 filas en la tabla, el filtro
 -- restante sobre author y created_at es ruido. Se revisa cuando `messages` crezca un orden de
 -- magnitud.
 --
--- Applied: PENDIENTE
+-- Applied: 2026-09-05 14:45:00 UTC (prod, manualmente vía psql, transacción única con
+--          ON_ERROR_STOP y verificación en la misma sesión). `messages` pasó de 13 a 14
+--          columnas; `author` existe, es VARCHAR(20) y es nullable. Backfill: UPDATE 386
+--          (inbound → 'customer') + UPDATE 333 (outbound → 'bot') = las 719 filas, cero
+--          quedaron sin autor y cero incoherentes con su `direction`.
+--          El CHECK se ejerció en ambos sentidos dentro de transacciones revertidas:
+--          rechaza 'supervisor' nombrando `ck_message_author`, acepta 'operator'. Después
+--          del ROLLBACK: 719 filas, 0 con author='operator', como corresponde a una
+--          migración que todavía no tiene quien escriba echoes.
+--          Aplicada ANTES del despliegue, según el campo `Orden` de arriba y ADR-012: el
+--          código entonces corriendo (la revisión `--0000058`) no declara esta columna y
+--          simplemente la ignora. `GET /health` del backend vivo devolvió 200 después de
+--          aplicarla.
 
 -- ============================================================
 -- 1. La columna (DDL)
@@ -42,7 +54,7 @@ ALTER TABLE messages
 
 -- El CHECK acepta NULL a propósito: la columna es nullable y el backfill de la sección 2 no
 -- puede alcanzar filas que se inserten entre el ALTER y el UPDATE dentro de esta transacción.
--- NOT VALID no hace falta: la tabla tiene 673 filas y el backfill corre en la misma sesión.
+-- NOT VALID no hace falta: la tabla tiene 719 filas y el backfill corre en la misma sesión.
 ALTER TABLE messages
     DROP CONSTRAINT IF EXISTS ck_message_author;
 
@@ -59,8 +71,8 @@ COMMENT ON COLUMN messages.author IS
 -- 2. Backfill
 -- ============================================================
 -- Todo lo que existe hoy es del cliente o del bot: hasta esta migración no había forma de que
--- un mensaje del operador entrara a la tabla. 673 filas al 2026-09-04 (359 inbound, 314
--- outbound), así que un UPDATE completo es trivial.
+-- un mensaje del operador entrara a la tabla. 719 filas medidas contra prod el 2026-09-05
+-- (386 inbound, 333 outbound), así que un UPDATE completo es trivial.
 
 UPDATE messages SET author = 'customer' WHERE direction = 'inbound'  AND author IS NULL;
 UPDATE messages SET author = 'bot'      WHERE direction = 'outbound' AND author IS NULL;

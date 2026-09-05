@@ -932,7 +932,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P26 | Consentimiento, canal autorizado y opt-out | 🟡 [ADR][DB] | — |
 | P27 | Motor de campañas outbound (remarketing) | 🔵 bloqueado por P24, P26 | — |
 | P28 | Gobierno de datos operativos en el NLG (llave/medios de pago inventados) | 🔴 registrado, no abierto | — |
-| P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 1–3 en rama `feat/p29-echoes-operador`; faltan la sesión de n8n (fase 4) y la verificación en prod (fase 5). El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
+| P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 0–3 hechas en `feat/p29-echoes-operador`, con la migración `015` **aplicada en prod el 2026-09-05 14:45 UTC** antes del despliegue; faltan mergear/desplegar, la sesión de n8n (fase 4) y la verificación en prod (fase 5). El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
 | P30 | Sin validación de dirección de envío | 🟡 registrado — se propone fusionar en ADR-010 | — |
 | P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | ✅ **cerrado como decisión, sin implementar** (2026-09-05): la ventana temporal era un proxy de una señal que ya llega al webhook. Lo resuelve P29 por echoes. Mismo tratamiento que P23. El número no se recicla | deuda #14 (parcial) |
 | P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
