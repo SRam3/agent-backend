@@ -88,10 +88,12 @@ bot debe saber, no lo que el sistema debe dar por cierto.
 
 De ahí se siguen dos consecuencias de implementación que esta decisión también fija:
 
-- El echo se adjunta a la **última conversación del cliente, sea cual sea su estado**, y nunca crea
-  una conversación nueva ni dispara la lazy compaction. Un mensaje del operador jamás debe costar
-  una llamada al LLM. Esto se aparta a propósito del `ingest` normal, que sí crea y sí compacta:
-  ahí el disparador es el cliente, y aquí no.
+- El echo se adjunta a la **última conversación del cliente, sea cual sea su estado**, sin mirar la
+  ventana de 24 h. Solo crea conversación si el cliente no tiene **ninguna** —el operador puede
+  haber escrito primero—, y en ese caso la crea desnuda: sin seed desde `profile` y, sobre todo,
+  **sin lazy compaction**. Un mensaje del operador jamás debe costar una llamada al LLM. Esto se
+  aparta a propósito del `ingest` normal, que sí abre conversación por ventana y sí compacta: ahí
+  el disparador es el cliente, y aquí no.
 - El echo sí actualiza `message_count` y `last_message_at`, porque es un mensaje real de esa
   conversación y porque extender la ventana de sesión de 24 h es justamente lo correcto mientras un
   humano atiende: la respuesta del cliente debe caer en la misma conversación.
