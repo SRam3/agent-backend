@@ -669,6 +669,12 @@ async def process_agent_action(
         conversation_id=conversation.id,
         client_id=client_id,
         direction="outbound",
+        # 'bot' explicitly, not NULL by omission (ADR-013). Everything reads
+        # this correctly by fallback — the breaker uses IS DISTINCT FROM and the
+        # compaction's else-branch says AGENTE — but `direction='outbound'` no
+        # longer means "the bot said it", so the row has to say who did. Without
+        # this the column would fill with NULLs from the moment it shipped.
+        author="bot",
         message_type="text",
         content=final_response_text,
         ai_model_used=ai_model,
