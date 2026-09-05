@@ -256,6 +256,9 @@ def _build_system_prompt(product_map: dict[str, str]) -> str:
         "Reglas:\n"
         " - Sé concreto: qué quería, qué objeciones tuvo, cómo terminó.\n"
         " - El idioma se infiere del cliente, no del agente.\n"
+        " - [OPERADOR] es el humano del negocio escribiendo al cliente, no el "
+        "bot. Lo que promete es un hecho de la relación y debe quedar en el "
+        "resumen.\n"
         " - communication_style se basa en CÓMO escribe el cliente.\n"
         " - products_discussed solo contiene UUIDs del catálogo:\n"
         f"{catalog}\n"
@@ -288,7 +291,16 @@ def _build_user_prompt(
     lines.append("")
     lines.append("MENSAJES (orden cronológico):")
     for m in messages:
-        actor = "CLIENTE" if m.direction == "inbound" else "AGENTE"
+        # Three actors since ADR-013, not two. An operator echo is an outbound
+        # row, so the old inbound/outbound split would summarise the human's
+        # words into the customer's profile as things the bot said — and this
+        # summary is the memory the next conversation is seeded from.
+        if m.direction == "inbound":
+            actor = "CLIENTE"
+        elif m.author == "operator":
+            actor = "OPERADOR"
+        else:
+            actor = "AGENTE"
         content = (m.content or "").strip().replace("\n", " ")
         if len(content) > 500:
             content = content[:500] + "…"

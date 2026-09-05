@@ -624,6 +624,22 @@ def test_recent_outbound_stmt_is_tenant_safe_ordered_and_limited():
     assert "LIMIT" in sql
 
 
+def test_the_breaker_does_not_count_the_operators_messages():
+    """The breaker asks "is the BOT repeating itself?", so it must only see the
+    bot's own rows.
+
+    Since ADR-013 an operator echo is an outbound row too, and one of them
+    landing between two identical bot replies would push the second out of this
+    two-row window and hide the loop — a silent regression in P8 introduced by
+    a front that has nothing to do with it. IS DISTINCT FROM rather than !=, so
+    the pre-migration-015 rows whose author is still NULL keep counting.
+    """
+    client_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    conv_id = uuid.UUID("00000000-0000-0000-0000-000000000009")
+    sql = str(_recent_outbound_stmt(client_id, conv_id))
+    assert "messages.author IS DISTINCT FROM" in sql
+
+
 # --- stub session: realistic process_agent_action paths without a DB --------
 class _StubResult:
     def __init__(self, scalar=None, scalars_list=None):

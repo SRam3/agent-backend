@@ -129,13 +129,23 @@ def _conversation() -> Conversation:
     )
 
 
-def _results_up_to_debounce_check(newer_message_id):
+#: Zero-based index of the debounce lookahead among the statements ingest emits.
+#: Named rather than inlined because ADR-013 inserted the operator-pause lookup
+#: right before it and shifted every hard-coded index in this file by one.
+_DEBOUNCE_LOOKAHEAD = 7
+
+
+def _results_up_to_debounce_check(newer_message_id, *, last_echo_at=None):
     """Canned results for every session.execute() from entry to the debounce
     lookahead, inclusive.
 
       1 client lookup   2 idempotency   3 resolve client_user
       4 conversation    5 advisory lock  6 counter update
-      7 debounce lookahead  <- newer_message_id
+      7 operator-pause lookup  <- last_echo_at (ADR-013; None = no operator)
+      8 debounce lookahead     <- newer_message_id
+
+    The list is positional, so step 7 landing in the middle is exactly why
+    every test that reaches the debounce goes through this one helper.
     """
     return [
         _client(),
@@ -144,6 +154,7 @@ def _results_up_to_debounce_check(newer_message_id):
         _conversation(),
         None,
         None,
+        last_echo_at,
         newer_message_id,
     ]
 
@@ -339,7 +350,7 @@ def test_readable_text_is_untouched_by_the_guard():
     result = _run(session, content="Quiero 2 libras de café en grano")
 
     assert result["reason"] == "debounce"  # not "unreadable_content"
-    assert len(session.statements) == 7  # the lookahead DID run
+    assert len(session.statements) == _DEBOUNCE_LOOKAHEAD + 1  # the lookahead DID run
 
 
 def test_debounce_ignores_newer_messages_that_cannot_take_a_turn():
@@ -356,7 +367,9 @@ def test_debounce_ignores_newer_messages_that_cannot_take_a_turn():
     with pytest.raises(AssertionError, match="ran past the canned results"):
         _run(session, content="¿Me lo pueden enviar hoy?")
 
-    assert len(session.statements) == 8, "should have proceeded past the lookahead"
+    assert len(session.statements) == _DEBOUNCE_LOOKAHEAD + 2, (
+        "should have proceeded past the lookahead"
+    )
 
 
 def test_debounce_lookahead_filters_on_content_in_sql():
@@ -365,7 +378,7 @@ def test_debounce_lookahead_filters_on_content_in_sql():
 
     _run(session, content="hola")
 
-    lookahead = str(session.statements[6]).lower()
+    lookahead = str(session.statements[_DEBOUNCE_LOOKAHEAD]).lower()
     assert "btrim" in lookahead, "debounce lookahead lost its readable-content filter"
 
 

@@ -93,8 +93,12 @@ def test_system_prompt_explains_pending_intent_rule():
 # ---------------------------------------------------------------------------
 # _build_user_prompt
 # ---------------------------------------------------------------------------
-def _fake_message(direction: str, content: str):
-    return SimpleNamespace(direction=direction, content=content)
+def _fake_message(direction: str, content: str, author: str = None):
+    """A message row. `author` defaults the way migration 015 backfilled the
+    673 pre-existing rows, so a stub reads like a real row from the table."""
+    if author is None:
+        author = "customer" if direction == "inbound" else "bot"
+    return SimpleNamespace(direction=direction, content=content, author=author)
 
 
 def _fake_conversation(
@@ -143,6 +147,29 @@ def test_user_prompt_labels_speakers():
     assert "[CLIENTE] Hola, quiero café" in out
     assert "[AGENTE] Claro, te ayudo" in out
 
+
+
+def test_user_prompt_labels_the_operator_apart_from_the_bot():
+    """ADR-013: an operator echo is an outbound row, so the old two-way split
+    would summarise the human's promise into the customer's profile as
+    something the bot said — and this summary is what seeds the NEXT
+    conversation. The delivery promise of 2026-08-19 is the case."""
+    conv = _fake_conversation()
+    msgs = [
+        _fake_message("inbound", "¿cuándo llega?"),
+        _fake_message("outbound", "Ya te confirmo", author="bot"),
+        _fake_message(
+            "outbound",
+            "¿podríamos realizarte la entrega pasado mañana?",
+            author="operator",
+        ),
+    ]
+
+    out = _build_user_prompt(conv, msgs, {})
+
+    assert "[CLIENTE] ¿cuándo llega?" in out
+    assert "[AGENTE] Ya te confirmo" in out
+    assert "[OPERADOR] ¿podríamos realizarte la entrega pasado mañana?" in out
 
 def test_user_prompt_truncates_very_long_messages():
     conv = _fake_conversation()
@@ -251,10 +278,10 @@ def _four_message_fixture():
         extracted_context={"product_id": "p-uuid", "quantity": 2},
     )
     messages = [
-        SimpleNamespace(direction="inbound", content="Hola, venden café?"),
-        SimpleNamespace(direction="outbound", content="Sí, Café Arenillo 340g."),
-        SimpleNamespace(direction="inbound", content="Quiero 2 bolsas en grano"),
-        SimpleNamespace(direction="outbound", content="Perfecto, ¿a qué ciudad?"),
+        _fake_message("inbound", "Hola, venden café?"),
+        _fake_message("outbound", "Sí, Café Arenillo 340g."),
+        _fake_message("inbound", "Quiero 2 bolsas en grano"),
+        _fake_message("outbound", "Perfecto, ¿a qué ciudad?"),
     ]
     session = _FakeSession([
         _FakeResult(scalar=conv),            # select(Conversation)
