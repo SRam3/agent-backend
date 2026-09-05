@@ -1,6 +1,6 @@
 # ADR-010 — El backend gobierna el resumen del pedido y los datos operacionales
 
-- **Estatus**: Propuesto
+- **Estatus**: Accepted (2026-09-04 — mergeado en PR #68 y desplegado en la revisión `--0000058`)
 - **Fecha**: 2026-08-23
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: diagnóstico de P15 (`user_confirmation` marcado por interpretación del LLM),

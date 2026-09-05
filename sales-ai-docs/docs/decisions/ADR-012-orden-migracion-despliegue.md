@@ -1,6 +1,6 @@
 # ADR-012 — Cada migración declara si va antes o después del despliegue
 
-- **Estatus**: Propuesto
+- **Estatus**: Accepted (2026-09-04 — ejercido en su primer caso real: la 013 partida en DDL y la 014 de datos+prompt)
 - **Fecha**: 2026-09-01
 - **Decididores**: Sebastian + cofounder/principal architect
 - **Origen**: auditoría del 2026-09-01 (`docs/postmortems/auditoria-2026-09-01-roadmap-y-planeacion.md` §2.2)

@@ -226,6 +226,31 @@ ventana temporal en el ingest; el mecanismo general de presencia de operador sig
 Detalle relacionado: el aviso de §2 dice «entra a acompañar y revisar el comprobante», y el operador en
 efecto entra al chat. Lo que este ADR no previó es que entrara **mientras el bot sigue activo**.
 
+## Notas as-built (2026-09-05) — el bot ya no acompaña hasta el botón
+
+Este ADR describe al bot acompañando en `active` hasta que el operador pulse "Confirmar pago". Con
+**P29 fase 3** (ADR-013) eso deja de ser el comportamiento: cuando el operador escribe al cliente
+desde el número del negocio, el echo se persiste con `author='operator'` y el `ingest` suprime los
+turnos siguientes durante 30 minutos con `reason: operator_active`.
+
+Tres precisiones sobre cómo convive con lo que este ADR decidió:
+
+- **No hay cambio de estado.** La conversación sigue en `active`; no se transiciona a
+  `human_handoff`, porque ese estado no tiene camino de regreso y una pausa que no expira no es una
+  pausa. La máquina de ADR-007 queda intacta.
+- **No hay botón de por medio.** El corte lo dispara el mensaje del operador, no un aviso que el
+  operador tenga que atender. El testimonio del 08-19 —«me quedé atendiendo porque vi el bot muy
+  perdido»— es la razón: cuando el bot falla, el humano va al chat, no a Telegram.
+- **La pausa vence sola** y se refresca con cada echo, así que el bot vuelve sin que nadie lo
+  reactive.
+
+El hueco que la nota as-built del 2026-09-01 dejó abierto —no existe forma de callar al bot en la
+ventana posterior al cierre— queda cubierto por esta vía, y **P31 se cierra como decisión, sin
+implementar**: la ventana temporal era un proxy de una señal que ya llega al webhook. Lo que sigue
+descubierto es el turno **en vuelo**, registrado como P34.
+
+---
+
 ## Cuándo revisar
 
 - Si el volumen de ventas crece al punto de que la revisión manual de comprobantes es
