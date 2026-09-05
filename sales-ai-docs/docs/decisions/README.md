@@ -82,16 +82,25 @@ Ej: "Cuando tengamos 3+ clientes con catálogo > 50 SKUs."
 | 007 | Colapso de state machine de 7 a 3 estados | Accepted | 2026-04-19 |
 | 008 | Soporte multiidioma e internacional | Accepted | 2026-06-16 |
 | 009 | Cierre del lazo de handoff humano | Accepted | 2026-07-19 |
-| 010 | El backend gobierna el resumen del pedido | Propuesto ⚠️ | 2026-08-23 |
+| 010 | El backend gobierna el resumen del pedido | Accepted | 2026-08-23 |
 | 011 | En qué reloj vive cada decisión temporal | Propuesto | 2026-09-01 |
-| 012 | Cada migración declara su orden vs. el despliegue | Propuesto | 2026-09-01 |
+| 012 | Cada migración declara su orden vs. el despliegue | Accepted | 2026-09-01 |
+| 013 | El operador es autor; sus echoes son contexto, nunca hecho | Accepted | 2026-09-05 |
 
-> ⚠️ **El archivo del 010 vive en la rama `feat/adr-010-backend-gobierna-resumen`**, pendiente de
-> merge. Pasa a `Accepted` cuando entre.
+> **El 010 pasó a `Accepted` el 2026-09-04**: la rama `feat/adr-010-backend-gobierna-resumen` se
+> mergeó (PR #68) y la revisión `--0000058` lo desplegó.
+>
+> **El 012 pasó a `Accepted` el 2026-09-04**, ejercido con éxito en su primer caso real: la
+> migración 013 se partió en DDL (antes del despliegue) y datos+prompt (014, después), y ambas
+> mitades entraron en el orden que el ADR prescribe.
+>
+> **El 011 sigue en `Propuesto`**: aún no se ha ejercido. Su único entregable —el microfix del
+> mismo segundo, `created_at >= msg_timestamp AND id != message.id`— sigue sin dueño; el sitio
+> natural es la sesión de n8n de P29 fase 4, junto a P9.
 >
 > **El 010 ya no está reservado para P10.** Este índice lo reservaba para el frente P10 (detección de
 > conversaciones no-humanas), cuyo ADR nunca se escribió. Se aplica el precedente de ADR-008: **el ADR
 > que efectivamente se escribe toma el número**. P10 tomará el siguiente libre cuando su decisión se
 > escriba; hoy su diseño vive en `docs/ROADMAP.md`.
 >
-> **Siguiente número libre: 013.**
+> **Siguiente número libre: 014.**

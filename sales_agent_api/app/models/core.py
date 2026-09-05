@@ -214,6 +214,15 @@ class Message(Base):
         UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False
     )
     direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Quién escribió (migración 015, ADR-013): 'bot' | 'operator' | 'customer'.
+    # Ortogonal a `direction`, no un valor más de ella: un echo del operador SALIÓ del
+    # negocio, así que es outbound y correcto; lo que faltaba era el autor. Meterlo en
+    # `direction` habría roto ck_message_direction y toda query que cuenta outbound,
+    # empezando por el circuit breaker de P8.
+    # Nullable porque la migración es aditiva; toda fila escrita por el código nuevo lo
+    # lleva. Los echoes son CONTEXTO, nunca hecho: ningún checkpoint, slot ni transición
+    # puede originarse en uno.
+    author: Mapped[Optional[str]] = mapped_column(String(20))
     message_type: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'text'")
     )

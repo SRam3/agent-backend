@@ -148,10 +148,18 @@ def create_app() -> FastAPI:
 
     # Register routers
     from app.api.v1.ingest import router as ingest_router
+    from app.api.v1.ingest_operator_echo import router as operator_echo_router
     from app.api.v1.agent import router as agent_router
     from app.api.v1.operator import router as operator_router
 
     application.include_router(ingest_router, prefix="/api/v1/ingest", tags=["Ingest"])
+    # Under the INGEST prefix on purpose (ADR-013 §2): an operator echo is
+    # webhook ingestion, not an operator action, so it takes the service token.
+    # Mounting it under /api/v1/operator/ would hand it the operator token —
+    # the one scoped to the "a sale was paid" button.
+    application.include_router(
+        operator_echo_router, prefix="/api/v1/ingest", tags=["Ingest"]
+    )
     application.include_router(agent_router, prefix="/api/v1/agent", tags=["Agent"])
     application.include_router(operator_router, prefix="/api/v1/operator", tags=["Operator"])
 

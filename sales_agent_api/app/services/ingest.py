@@ -102,6 +102,64 @@ def _sql_has_readable_content(column):
 
 
 # ---------------------------------------------------------------------------
+# Operator presence (ADR-013)
+# ---------------------------------------------------------------------------
+#: How long one message from the operator keeps the bot quiet. Models "a human
+#: is in this chat right now", and human attention in a chat is measured in
+#: minutes. Unlike a post-sale window, this number does not have to be right:
+#: every echo refreshes it, so guessing low just means the bot comes back a
+#: little early and the operator's next message silences it again.
+DEFAULT_OPERATOR_PAUSE_MINUTES = 30
+
+#: Prefix that carries authorship into the text the LLM actually reads.
+#: The label n8n renders is computed in its "Build LLM Prompt" node, which maps
+#: `direction` to Customer/Agent and would therefore attribute the operator's
+#: words to the bot. Until that node learns about `author`, the marker travels
+#: inside the content. The `author` field ships alongside it so n8n can switch
+#: to the clean version without another backend change.
+_OPERATOR_CONTENT_PREFIX = "[operador] "
+
+
+def _operator_pause_minutes(business_rules: dict) -> int:
+    """Pause window in minutes, per tenant, with the code default as fallback.
+
+    A malformed or non-positive value falls back rather than disabling the
+    pause: a typo in `business_rules` must not silently hand the conversation
+    back to a bot while a human is answering it.
+    """
+    raw = (business_rules or {}).get("operator_pause_minutes")
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_OPERATOR_PAUSE_MINUTES
+    return minutes if minutes > 0 else DEFAULT_OPERATOR_PAUSE_MINUTES
+
+
+def _content_for_prompt(message: Message) -> Optional[str]:
+    """Message text as the LLM should read it, authorship included.
+
+    Only the operator gets a marker. n8n already labels inbound as Customer and
+    outbound as Agent, and both of those are right; the operator is the one case
+    that would otherwise be read back as the bot's own words.
+    """
+    if message.author == "operator" and (message.content or "").strip():
+        return _OPERATOR_CONTENT_PREFIX + message.content
+    return message.content
+
+
+def author_of(message: Message) -> str:
+    """Authorship of a row, tolerant of the pre-migration-015 backlog.
+
+    `author` is nullable because migration 015 is additive. Rows written before
+    it are inferred exactly the way the backfill inferred them, so a partially
+    backfilled table and a fully backfilled one read the same.
+    """
+    if message.author:
+        return message.author
+    return "customer" if message.direction == "inbound" else "bot"
+
+
+# ---------------------------------------------------------------------------
 # Suppressed-turn response
 # ---------------------------------------------------------------------------
 def build_suppressed_response(
@@ -294,6 +352,65 @@ async def ingest_message(
         )
         return build_suppressed_response("unreadable_content", conversation)
 
+    # --- 8c-bis. Operator-presence pause (ADR-013 §4) ------------------------
+    # A human is in this chat right now. Stay out of their way.
+    #
+    # Order is deliberate on both sides. AFTER the unreadable guard, because an
+    # unreadable medium keeps its own, more specific reason. BEFORE the
+    # debounce, because there is no sense in sleeping 5s only to say nothing.
+    #
+    # Suppression with an expiry, never a state change: ADR-007's machine is
+    # active → human_handoff → closed with no way back, and a pause that does
+    # not expire is not a pause. The window refreshes with every echo, so
+    # erring low only means the bot returns a little early and the operator's
+    # next message silences it again.
+    business_rules = client.business_rules or {}
+    pause_minutes = _operator_pause_minutes(business_rules)
+    last_echo_row = await session.execute(
+        select(Message.created_at)
+        .where(
+            Message.conversation_id == conversation.id,
+            Message.author == "operator",
+            # Both sides of this comparison are META's clock (ADR-011 §5.2.4):
+            # the echo carries Meta's timestamp and so does this inbound. Using
+            # now() here would compare a wall clock against a Meta one, which
+            # is the exact seam ADR-011 was written to stop us from crossing.
+            Message.created_at >= msg_timestamp - timedelta(minutes=pause_minutes),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    last_echo_at = last_echo_row.scalar_one_or_none()
+    if last_echo_at is not None:
+        logger.info(
+            "Operator active: no turn for %s (last echo %s, pause %d min)",
+            chakra_message_id,
+            last_echo_at.isoformat(),
+            pause_minutes,
+        )
+        # The trail is not optional (ADR-013 §4). Three suppression paths
+        # already return before the AuditLog of step 10, which is why 36 inbound
+        # have no `message_ingest` event and a turn silenced by the guard cannot
+        # be told from one silenced by debounce or lost to a 500 (deuda #19).
+        # This path does not get to add a fourth silent hole. The endpoint
+        # commits what we add here.
+        session.add(
+            AuditLog(
+                client_id=client_id,
+                event_type="turn_suppressed",
+                entity_type="message",
+                entity_id=message.id,
+                actor_type="system",
+                new_value={
+                    "reason": "operator_active",
+                    "last_echo_at": last_echo_at.isoformat(),
+                    "pause_minutes": pause_minutes,
+                    "conversation_id": str(conversation.id),
+                },
+            )
+        )
+        return build_suppressed_response("operator_active", conversation)
+
     # --- 8d. Rapid-fire debounce ---------------------------------------------
     # Sleep briefly, then check whether a newer inbound arrived — if so, let
     # that one respond instead of answering each burst message separately.
@@ -332,7 +449,7 @@ async def ingest_message(
     conversation = conv_row2.scalar_one()
 
     # --- 9. Compute strategy -------------------------------------------------
-    business_rules: dict = client.business_rules or {}
+    # `business_rules` was already read at 8c-bis, for the pause window.
     goal = conversation.active_goal or business_rules.get("default_goal", "close_sale")
     collected_data: dict = conversation.extracted_context or {}
 
@@ -422,11 +539,21 @@ async def ingest_message(
         .order_by(Message.created_at.desc())
         .limit(20)
     )
+    # Authorship travels two ways on purpose (ADR-013). `author` is the clean
+    # field. The prefix inside `content` is what actually reaches the model
+    # today, because the Customer/Agent label is rendered by n8n's "Build LLM
+    # Prompt" node from `direction` alone — so without it the operator's words
+    # would be read back to the LLM as the bot's own, which is precisely the
+    # blindness P29 exists to end.
+    #
+    # Ordering already works: echoes are stamped with Meta's clock, the same
+    # clock the inbound rows carry (ADR-011 §5.2.4).
     recent_messages = [
         {
             "id": str(m.id),
             "direction": m.direction,
-            "content": m.content,
+            "author": author_of(m),
+            "content": _content_for_prompt(m),
             "message_type": m.message_type,
             "created_at": m.created_at.isoformat(),
         }

@@ -159,6 +159,13 @@ def _recent_outbound_stmt(client_id: uuid.UUID, conversation_id: uuid.UUID):
             Message.conversation_id == conversation_id,
             Message.client_id == client_id,
             Message.direction == "outbound",
+            # The breaker asks "is the BOT repeating itself?", so it must only
+            # see the bot's own messages. Since ADR-013 an operator echo is also
+            # an outbound row, and one of them landing between two identical bot
+            # replies would push the second out of this two-row window and hide
+            # the loop. IS DISTINCT FROM, not !=, so the pre-015 rows whose
+            # author is still NULL keep counting.
+            Message.author.is_distinct_from("operator"),
         )
         .order_by(Message.created_at.desc())
         .limit(_LOOP_PREVIOUS_OUTBOUNDS)

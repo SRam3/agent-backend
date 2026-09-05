@@ -209,3 +209,54 @@ def test_operator_endpoint_500_when_token_unconfigured(monkeypatch):
         assert response.status_code == 500
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# P29 / ADR-013 — the operator-echo surface takes the SERVICE token
+# ---------------------------------------------------------------------------
+# An echo is webhook ingestion, not an operator ACTION. `SALES_AI_OPERATOR_TOKEN`
+# is scoped to /api/v1/operator/* because that path holds the "a sale was paid"
+# button; letting it reach an ingest surface would widen the blast radius of the
+# one credential the operator carries. Mounting the route under the ingest prefix
+# is what makes the separation free — these two tests are what keep it that way.
+def test_operator_echo_rejects_the_operator_token(monkeypatch):
+    """POST /api/v1/ingest/operator-echo with the OPERATOR token → 401."""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
+
+    application = _reload_app(monkeypatch)
+
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/ingest/operator-echo",
+                json={},
+                headers={"Authorization": "Bearer test-operator-token-ci"},
+            )
+        assert response.status_code == 401
+
+    asyncio.run(_run())
+
+
+def test_operator_echo_requires_a_tenant(monkeypatch):
+    """Right token, no X-Client-ID → 400. The tenant boundary is the header,
+    never a value read out of the echo payload."""
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
+
+    application = _reload_app(monkeypatch)
+
+    async def _run():
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/ingest/operator-echo",
+                json={},
+                headers={"Authorization": "Bearer test-token-ci"},
+            )
+        assert response.status_code == 400
+
+    asyncio.run(_run())

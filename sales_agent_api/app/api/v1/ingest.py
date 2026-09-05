@@ -51,7 +51,8 @@ class IngestMessageRequest(BaseModel):
 class IngestMessageResponse(BaseModel):
     should_respond: bool
     #: Why the turn was suppressed. Empty when should_respond is True.
-    #: One of "", "debounce", "duplicate", "unreadable_content".
+    #: One of "", "debounce", "duplicate", "unreadable_content",
+    #: "operator_active" (ADR-013: a human is answering this chat right now).
     reason: str = ""
     conversation_id: uuid.UUID
     conversation_state: str
