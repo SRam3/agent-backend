@@ -133,6 +133,54 @@ _ORDER_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
 )
 
 
+def _greeting_instruction(
+    first_name: str | None,
+    is_first_turn: bool,
+    *,
+    returning: bool,
+) -> str:
+    """La línea de INSTRUCCIÓN del bloque de cliente, consciente del turno.
+
+    Una sola fuente para los tres casos (recurrente, nuevo con nombre de
+    WhatsApp, nuevo anónimo) porque el defecto era idéntico en los tres: la
+    orden de saludar se reinyectaba en cada turno.
+
+    El nombre se declara como HECHO ("el cliente se llama X"), no como orden
+    ("dirígete a X por su nombre"). La orden permanente es lo que hizo que el
+    bot nombrara al cliente en seis de diez mensajes el 2026-09-06,
+    contradiciendo al `system_prompt_template`, que pide no repetir el nombre en
+    cada mensaje.
+    """
+    name_fact = f"El cliente se llama {first_name}. " if first_name else ""
+
+    if is_first_turn:
+        if returning:
+            return (
+                f"INSTRUCCIÓN: {name_fact}Es un cliente que ya conocemos: no te presentes "
+                "como si fuera la primera vez ni preguntes datos que ya tenemos arriba. "
+                "Este es tu primer mensaje de la conversación, así que salúdalo con cercanía."
+            )
+        return (
+            f"INSTRUCCIÓN: {name_fact}Este es tu primer mensaje de la conversación: "
+            "preséntate brevemente y pregunta en qué le puedes ayudar."
+        )
+
+    # Segundo turno en adelante. La prohibición es EXPLÍCITA a propósito: quitar
+    # la orden positiva no basta, porque la ausencia de instrucción pesa menos
+    # que una negativa. El prompt de persona ya decía "saluda UNA SOLA vez" y el
+    # modelo lo ignoró mientras hubo una orden positiva compitiendo.
+    tail = (
+        "no preguntes datos que ya tenemos arriba."
+        if returning
+        else "continúa la conversación donde quedó."
+    )
+    return (
+        f"INSTRUCCIÓN: {name_fact}YA SALUDASTE en esta conversación. NO vuelvas a saludar, "
+        "NO te presentes otra vez y NO repitas su nombre en cada mensaje; "
+        f"{tail}"
+    )
+
+
 def _language_instruction(language: str | None) -> str | None:
     """Línea de INSTRUCCIÓN DE IDIOMA. Una sola fuente para el texto: la usan
     tanto el perfil de cliente recurrente como el de cliente nuevo (ADR-008)."""
@@ -157,6 +205,8 @@ def format_customer_profile(
     display_name: str | None,
     profile: dict,
     live_language: str | None = None,
+    *,
+    is_first_turn: bool = True,
 ) -> str:
     """Bloque de perfil del cliente — qué sabemos de él antes de esta conversación.
 
@@ -168,6 +218,14 @@ def format_customer_profile(
     ``live_language`` es el idioma detectado en el mensaje entrante de ESTE
     turno (ADR-008); tiene prioridad sobre ``profile["language"]``, que la
     compaction puebla de forma diferida.
+
+    ``is_first_turn`` dice si el bot **todavía no ha hablado** en esta
+    conversación. Existe porque este bloque se reinyecta en CADA turno, y una
+    orden de saludar que se repite turno a turno compite de frente con el
+    `system_prompt_template`, que manda saludar una sola vez y no repetir el
+    nombre en cada mensaje. Cuando dos instrucciones se contradicen el modelo
+    elige, y el 2026-09-06 eligió saludar dos veces y nombrar al cliente en seis
+    de diez mensajes.
     """
     profile = profile or {}
     lines = ["=== CLIENTE ==="]
@@ -178,7 +236,7 @@ def format_customer_profile(
 
     if not profile and not display_name:
         lines.append("Cliente nuevo. No tenemos datos previos.")
-        lines.append("INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar.")
+        lines.append(_greeting_instruction(None, is_first_turn, returning=False))
         live_lang_line = _language_instruction(live_language)
         if live_lang_line:
             lines.append(live_lang_line)
@@ -248,19 +306,10 @@ def format_customer_profile(
                     lines.append(f"INSTRUCCIÓN DE ESTILO: {style_hint}")
 
         lines.append("")
-        if first_name:
-            lines.append(
-                f"INSTRUCCIÓN: Dirígete a {first_name} por su nombre. No te vuelvas a presentar "
-                "ni preguntes datos que ya tenemos arriba. Saluda con cercanía (cliente recurrente)."
-            )
-        else:
-            lines.append(
-                "INSTRUCCIÓN: Es cliente recurrente. No repreguntes datos ya en archivo. "
-                "Saluda con cercanía."
-            )
+        lines.append(_greeting_instruction(first_name, is_first_turn, returning=True))
     elif display_name:
         lines.append(f"Cliente nuevo. En WhatsApp aparece como: {display_name}")
-        lines.append("INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar.")
+        lines.append(_greeting_instruction(None, is_first_turn, returning=False))
         live_lang_line = _language_instruction(live_language)
         if live_lang_line:
             lines.append(live_lang_line)
@@ -272,6 +321,8 @@ def format_conversation_summary(
     user_context: dict,
     extracted_context: dict,
     live_language: str | None = None,
+    *,
+    is_first_turn: bool = True,
 ) -> str:
     """Resumen de estado para el LLM en español — perfil + estado del pedido.
 
@@ -284,7 +335,11 @@ def format_conversation_summary(
     profile = user_context.get("profile") or {}
     ctx = extracted_context or {}
 
-    sections = [format_customer_profile(display_name, profile, live_language)]
+    sections = [
+        format_customer_profile(
+            display_name, profile, live_language, is_first_turn=is_first_turn
+        )
+    ]
 
     # --- ESTADO DEL PEDIDO --------------------------------------------------
     order_lines = ["=== ESTADO DEL PEDIDO ==="]

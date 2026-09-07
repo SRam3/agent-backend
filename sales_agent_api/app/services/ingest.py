@@ -561,6 +561,16 @@ async def ingest_message(
     ]
 
     # --- Conversation summary block -------------------------------------------
+    # Has the BOT spoken yet in this conversation? Asked about AUTHORSHIP, not
+    # direction: an operator echo is outbound too (ADR-013), and the operator
+    # having written does not mean the bot already greeted.
+    #
+    # This block is re-injected on every turn, so an instruction to greet that
+    # repeats turn after turn fights the `system_prompt_template`, which says to
+    # greet exactly once. On 2026-09-06 the model resolved that contradiction by
+    # greeting twice.
+    bot_has_spoken = any(m["author"] == "bot" for m in recent_messages)
+
     # The language directive goes FIRST: position drives adherence (ADR-008).
     conversation_summary = (
         format_language_directive(live_language)
@@ -572,6 +582,7 @@ async def ingest_message(
             },
             extracted_context=collected_data,
             live_language=live_language,
+            is_first_turn=not bot_has_spoken,
         )
     )
 

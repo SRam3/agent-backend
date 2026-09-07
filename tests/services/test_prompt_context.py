@@ -5,6 +5,8 @@ Pure Python — no database, no network, no LLM calls.
 import sys
 import os
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../sales_agent_api"))
 
 from app.services.prompt_context import (
@@ -189,7 +191,7 @@ def test_summary_returning_customer_profile():
     assert "Nombre completo: Juan Pérez" in result
     assert "Dirección: Calle 10 #5-20" in result
     assert "Ciudad: Manizales" in result
-    assert "Dirígete a Juan por su nombre" in result
+    assert "El cliente se llama Juan" in result
 
 
 def test_summary_combines_profile_and_context():
@@ -206,7 +208,7 @@ def test_summary_combines_profile_and_context():
 def test_profile_block_new_customer():
     result = format_customer_profile(None, {})
     assert "Cliente nuevo" in result
-    assert "Preséntate brevemente" in result
+    assert "preséntate brevemente" in result
 
 
 def test_profile_block_returning_customer_with_preferences():
@@ -410,17 +412,21 @@ def test_live_language_spanish_beats_profile_english():
 
 
 def test_no_live_language_is_byte_identical_to_current_behavior():
-    """Regresión: sin live_language, la salida es byte-idéntica a la de antes
-    del ADR-008 (snapshots literales del comportamiento previo al cambio)."""
+    """Snapshot literal del bloque de cliente. Actualizado el 2026-09-06 al
+    volver la instrucción consciente del turno: el texto cambió a propósito, y
+    lo que este test protege sigue siendo lo mismo — que sin `live_language` no
+    se cuela ninguna línea de idioma (ADR-008)."""
     assert format_customer_profile(None, {}) == (
         "=== CLIENTE ===\n"
         "Cliente nuevo. No tenemos datos previos.\n"
-        "INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar."
+        "INSTRUCCIÓN: Este es tu primer mensaje de la conversación: "
+        "preséntate brevemente y pregunta en qué le puedes ayudar."
     )
     assert format_customer_profile("Juan", {}) == (
         "=== CLIENTE ===\n"
         "Cliente nuevo. En WhatsApp aparece como: Juan\n"
-        "INSTRUCCIÓN: Preséntate brevemente y pregunta en qué le puedes ayudar."
+        "INSTRUCCIÓN: Este es tu primer mensaje de la conversación: "
+        "preséntate brevemente y pregunta en qué le puedes ayudar."
     )
     assert format_customer_profile("John", {"first_name": "John", "language": "en"}) == (
         "=== CLIENTE ===\n"
@@ -429,8 +435,10 @@ def test_no_live_language_is_byte_identical_to_current_behavior():
         "\n"
         "INSTRUCCIÓN DE IDIOMA: el cliente escribe en INGLÉS. Respóndele en inglés.\n"
         "\n"
-        "INSTRUCCIÓN: Dirígete a John por su nombre. No te vuelvas a presentar "
-        "ni preguntes datos que ya tenemos arriba. Saluda con cercanía (cliente recurrente)."
+        "INSTRUCCIÓN: El cliente se llama John. Es un cliente que ya conocemos: "
+        "no te presentes como si fuera la primera vez ni preguntes datos que ya "
+        "tenemos arriba. Este es tu primer mensaje de la conversación, así que "
+        "salúdalo con cercanía."
     )
 
 
@@ -466,3 +474,86 @@ def test_profile_block_no_memory_block_when_no_summary():
     )
     assert "MEMORIA DE LA ÚLTIMA CONVERSACIÓN" not in result
     assert "Quedó a punto de comprar" not in result
+
+
+# ===========================================================================
+# El saludo es del primer turno, no de todos (2026-09-06)
+# ===========================================================================
+# El bloque de cliente se reinyecta en CADA turno. Mientras la instrucción de
+# saludar se repetía turno a turno, competía de frente con el
+# `system_prompt_template`, que manda saludar UNA SOLA vez y no repetir el
+# nombre en cada mensaje. Cuando dos instrucciones se contradicen el modelo
+# elige: el 2026-09-06 saludó dos veces ("Hola, Sebastián" en el turno 1 y otra
+# vez en el 2) y nombró al cliente en seis de diez mensajes.
+_RECURRENTE = {"first_name": "Sebastián", "full_name": "Sebastián Ramirez", "purchase_count": 3}
+
+
+def test_el_primer_turno_si_manda_saludar():
+    result = format_customer_profile("Sebastián", _RECURRENTE, is_first_turn=True)
+
+    assert "salúdalo con cercanía" in result.lower()
+    assert "primer mensaje de la conversación" in result
+
+
+def test_a_partir_del_segundo_turno_la_orden_de_saludar_desaparece():
+    result = format_customer_profile("Sebastián", _RECURRENTE, is_first_turn=False)
+
+    assert "salúdalo con cercanía" not in result.lower()
+    assert "primer mensaje de la conversación" not in result
+
+
+def test_a_partir_del_segundo_turno_la_prohibicion_es_explicita():
+    """Quitar la orden positiva no basta: la ausencia de instrucción pesa menos
+    que una negativa. El prompt de persona YA decía "saluda UNA SOLA vez" y el
+    modelo lo ignoró mientras hubo una orden positiva compitiendo."""
+    result = format_customer_profile("Sebastián", _RECURRENTE, is_first_turn=False)
+
+    assert "YA SALUDASTE" in result
+    assert "NO vuelvas a saludar" in result
+    assert "NO repitas su nombre en cada mensaje" in result
+
+
+def test_el_nombre_es_un_hecho_no_una_orden_permanente():
+    """"Dirígete a X por su nombre" en cada turno es lo que hizo que el bot
+    nombrara al cliente en seis de diez mensajes, contradiciendo al prompt de
+    persona. El nombre se declara; usarlo o no lo decide la persona."""
+    for first_turn in (True, False):
+        result = format_customer_profile("Sebastián", _RECURRENTE, is_first_turn=first_turn)
+        assert "El cliente se llama Sebastián" in result
+        assert "Dirígete a" not in result
+
+
+@pytest.mark.parametrize(
+    "display_name,profile,caso",
+    [
+        (None, {}, "nuevo anónimo"),
+        ("Juan", {}, "nuevo con nombre de WhatsApp"),
+        ("Sebastián", _RECURRENTE, "recurrente"),
+    ],
+)
+def test_los_tres_casos_de_cliente_respetan_el_turno(display_name, profile, caso):
+    """El defecto era idéntico en los tres caminos del bloque, no solo en el
+    del cliente recurrente. Se arreglan los tres o queda medio arreglado."""
+    primero = format_customer_profile(display_name, profile, is_first_turn=True)
+    despues = format_customer_profile(display_name, profile, is_first_turn=False)
+
+    assert primero != despues, f"el caso «{caso}» ignora el turno"
+    assert "YA SALUDASTE" in despues
+    assert "YA SALUDASTE" not in primero
+
+
+def test_el_default_saluda_para_no_romper_a_quien_no_pase_el_turno():
+    """Aditivo a propósito: omitir el argumento se comporta como antes."""
+    assert format_customer_profile("Sebastián", _RECURRENTE) == format_customer_profile(
+        "Sebastián", _RECURRENTE, is_first_turn=True
+    )
+
+
+def test_format_conversation_summary_propaga_el_turno():
+    """El ingest habla con el resumen, no con el bloque de perfil directamente."""
+    despues = format_conversation_summary(
+        {"display_name": "Sebastián", "profile": _RECURRENTE}, {}, is_first_turn=False
+    )
+
+    assert "YA SALUDASTE" in despues
+    assert "salúdalo con cercanía" not in despues.lower()
