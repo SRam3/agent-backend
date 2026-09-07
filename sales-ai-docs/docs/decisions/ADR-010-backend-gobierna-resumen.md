@@ -243,6 +243,48 @@ aporta valor. La decisión es acotar *cuándo* su juicio puede aceptarse, no ree
 - **Cortocircuito del LLM** en el turno del resumen (optimización de tokens).
 - **P21** (rediseño del prompt/directive): este ADR reduce el prompt pero no lo rediseña.
 
+## Notas as-built (2026-09-06) — la §6 tiene una precondición silenciosa
+
+La §6 dice que cualquier modificación del pedido invalida la confirmación y dispara un resumen
+nuevo. El mecanismo está implementado y es correcto. Lo que no quedó escrito es **de dónde le
+llega la señal**, y el 2026-09-06 se vio por qué importa.
+
+En una conversación de prueba el cliente corrigió su dirección («es unidad campestre al parque»,
+«corrige»). El bot respondió *«apunto la dirección como Carrera 84F #3C-39, Unidad Campestre al
+Parque»* — y el `extracted_data` de ese turno fue `{}`. El modelo **narró la corrección en prosa
+sin emitir el campo**. La cadena es:
+
+```
+el cliente corrige
+  → el LLM emite extracted_data.shipping_address     ← se rompió AQUÍ
+  → el backend mergea
+  → cambia el fingerprint
+  → se limpia user_confirmation
+  → se renderiza un resumen nuevo
+```
+
+Como `extracted_context` nunca cambió, el fingerprint tampoco, y la §6 no tenía nada que
+invalidar. La venta se cerró sobre la dirección vieja, con `user_confirmation` intacta, y el
+sistema en ningún momento supo que había una discrepancia.
+
+**La consecuencia que este ADR no dejó explícita**: ADR-010 movió al backend el *renderizado* del
+resumen y el *juicio* de la confirmación, pero la **detección del cambio** sigue siendo del LLM.
+El backend gobierna lo que sabe; no puede gobernar lo que no le reportan. La §6 es determinista
+aguas abajo de una entrada que no lo es.
+
+**Lo que NO se concluye de aquí.** El reflejo es cambiar el chat call a `json_schema` estricto
+(hoy usa `json_object` a secas — deuda #8, y la compaction sí usa el modo estricto). Puede que sea
+la respuesta, pero **no hay ningún dato sobre con qué frecuencia ocurre esto**: hay un caso
+observado, en una conversación de prueba, con un cliente que además es el operador. Cambiar el
+formato de salida del turno conversacional toca el nodo `Build LLM Prompt` del workflow vivo y el
+contrato de todas las respuestas del modelo. Es exactamente el tipo de cambio que no se hace sobre
+una anécdota.
+
+Primero se instrumenta y se mide. Ese frente es **P35**, y decide con datos si el esquema estricto
+se justifica.
+
+---
+
 ## Cuándo revisar
 
 - Si aparecen falsos positivos dentro de la ventana válida (afirmación aparente que no lo
