@@ -205,6 +205,33 @@ Tres cosas que se deciden aquí, no en el frente siguiente.
 El negocio confirmó que el operador **siempre** escribe al cliente desde el número del negocio, así
 que el echo cubre la señal completa y no hay punto ciego por canal.
 
+## Notas as-built (2026-09-07) — «se refresca solo» no cubre el caso 2
+
+Las alternativas descartadas dicen que la ventana temporal de P31 falla en tres casos y que el
+echo no tiene ninguno de esos problemas «porque se refresca solo». Para los casos 1 y 3 es cierto.
+Para el **caso 2 —el cliente responde mucho después— no lo es**, y el 2026-09-07 se vio por qué.
+
+Que la señal se refresque sola solo ayuda **mientras el operador siga escribiendo**. Cuando el
+cliente contesta tres horas más tarde no hay ningún humano en el chat, la pausa de 30 minutos ha
+expirado, y **debe** haber expirado: callar al bot ahí lo dejaría sin responder, que es el defecto
+3 de la ventana temporal, el mismo que este ADR usó para rechazarla.
+
+Lo que el echo sí aporta en ese caso es **contexto, no silencio**: persistido en la conversación
+cerrada, entra en la lazy compaction y el resumen le cuenta al bot que el operador confirmó el
+envío. El bot responde, pero deja de responder a ciegas. Es una mitigación parcial, y hay que
+decirlo así.
+
+**Consecuencia de registro**: cerrar P31 sobre este ADR fue demasiado fuerte. P31 se reabre el
+2026-09-07 acotado a lo que queda —que la respuesta de un cliente a una conversación cerrada no
+arranque de cero pidiendo un pedido nuevo— y se despacha junto con la fase 4.
+
+**Observación que no es de este ADR pero salió del mismo caso**: la compaction corrió y produjo un
+resumen correcto («ya compró, pagó, se coordina el envío»), y el bot igual leyó un «de una,
+gracias» como una compra nueva. El directive del DAG pesó más que el resumen. Eso no lo arregla
+ninguna fase de P29.
+
+---
+
 ## Cuándo revisar
 
 - Cuando exista un segundo operador: la columna `author` distingue rol, no persona, y hoy eso

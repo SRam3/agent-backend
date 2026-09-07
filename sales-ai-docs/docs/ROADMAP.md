@@ -15,7 +15,9 @@
 > sección "Orden sugerido de cierre". Esto aplica en particular a lo que vino de
 > `docs/north-star.md`, que sigue siendo contexto de dirección de solo lectura.
 >
-> Última actualización: 2026-09-06 (arreglo de la clave de OpenAI de n8n tras dos días y medio de
+> Última actualización: 2026-09-07 (P31 reabierto: la fase 4 de P29 no cubre al cliente que
+> responde horas después a una conversación cerrada — evidencia en la entrada de P31).
+> Anterior: 2026-09-06 (arreglo de la clave de OpenAI de n8n tras dos días y medio de
 > silencio; saludo repetido corregido; P35 registrado a partir de la conversación de prueba).
 > Anterior: 2026-09-05 (P29 acotado a echoes: ADR-013 aceptado, migración 015 y
 > el backend de las fases 1–3; P31 cerrado como decisión — ver
@@ -391,7 +393,7 @@ repetir el error del gate de teléfono: valida FORMA, no veracidad, y eso se dec
 Probablemente basta empezar por normalizar y devolver el resumen para confirmación explícita.
 Riesgo: [B] acotado si es solo forma; [ADR] si entra un proveedor externo.
 
-### P31 · Silencio post-venta: el bot contesta al cliente que acaba de comprar (registrado 2026-09-01, ✅ **CERRADO COMO DECISIÓN el 2026-09-05, sin implementar**)
+### P31 · Silencio post-venta: el bot contesta al cliente que acaba de comprar (registrado 2026-09-01, cerrado el 09-05, 🔴 **REABIERTO el 2026-09-07**)
 **Qué**: cerrar la venta deja la conversación en `closed`, y el siguiente mensaje del cliente abre una
 conversación NUEVA en `active` que el bot contesta — justo mientras el operador atiende a mano. No es
 que el bot se re-presente (el seed desde `profile` funciona y usa el nombre): es que **no sabe que
@@ -415,8 +417,10 @@ correcta; el supuesto de que ese mensaje siguiente es una próxima venta no lo e
 
 ---
 
-**✅ CERRADO COMO DECISIÓN el 2026-09-05, sin escribir código.** Mismo tratamiento que la
-auditoría le dio a P23. El número no se recicla.
+**Cerrado como decisión el 2026-09-05 y REABIERTO el 2026-09-07.** El cierre se apoyaba en que
+P29 lo cubría entero. La evidencia del 09-07 dice que no, así que el frente vuelve. Conserva su
+número porque es el mismo problema: la regla del repo prohíbe **reciclar** un número para otro
+tema, no reabrir uno para el suyo.
 
 **Por qué se rechaza la ventana temporal**: es un **proxy** de "hay un humano atendiendo", y el
 proxy falla en los tres casos que importan.
@@ -427,14 +431,50 @@ proxy falla en los tres casos que importan.
 3. El operador se fue: la ventana calla al bot cuando **no hay nadie**, y el cliente queda sin
    respuesta y sin aviso.
 
-El echo del operador no tiene ninguno de esos problemas porque **se refresca solo**: cada
-mensaje del operador extiende la pausa, sea a los 2 minutos o a los 3 días. Se deja de adivinar
-una señal que ya se recibe en el webhook. La evidencia del 08-26 que motivó este frente lo dice
-sin querer: los **4 echoes del operador** entre las 17:38:09 y las 17:40:01 ya estaban llegando,
-y se descartaban.
+El echo del operador no tiene los problemas 1 y 3 porque **se refresca solo**: cada mensaje del
+operador extiende la pausa, sea a los 2 minutos o a las 3 horas. Eso sigue siendo cierto y sigue
+siendo la razón de no construir una ventana temporal.
 
-Lo resuelve **P29** (ADR-013 §4). La nota as-built de ADR-009 registra el cambio de
-comportamiento. Riesgo: ninguno — no hay trabajo.
+**Lo que el cierre del 09-05 dio por cubierto y NO lo está: el caso 2.** Que la señal se refresque
+sola solo ayuda **mientras el operador siga escribiendo**. Un cliente que responde horas después,
+cuando ya no hay nadie atendiendo, cae fuera de la pausa — y debe caer fuera, porque a esa hora
+callar al bot sería dejarlo sin respuesta, que es justo el defecto 3 de la ventana temporal.
+
+### Reapertura — la evidencia del 2026-09-07
+
+Conversación `b313a570`, cerrada a las 22:34:53 del 09-06 con la venta registrada.
+
+| Hora (UTC) | Qué pasó |
+|---|---|
+| 09-06 23:13:26–31 | El operador escribe al cliente. **Tres echoes descartados** por n8n en ~107 ms cada uno, marcados `success` (exec 12125/12127/12129) |
+| 09-07 02:20:18 | El cliente responde «De una .gracias» — a un mensaje que el sistema nunca vio |
+| 09-07 02:20:23 | La conversación estaba `closed`, así que el ingest **abre una nueva** (`b2bd2c3c`, `v1`) |
+| 09-07 02:20:33 | El bot responde «¡Claro! ¿Qué cantidad de bolsas quieres esta vez?» |
+
+**Dos cosas que este caso enseña y que el cierre no anticipó:**
+
+1. **La pausa habría expirado, y con razón.** Tres horas y siete minutos entre el mensaje del
+   operador y la respuesta del cliente, contra una ventana de 30 minutos. Subir la ventana no es
+   la respuesta: sería reinventar el proxy que este frente rechazó.
+2. **La conversación `closed` bifurca el diálogo.** El ingest exige `state != 'closed'`, así que
+   la respuesta del cliente abre una conversación nueva, sembrada con sus datos pero sin pedido, y
+   el DAG apunta a armar uno. De ahí sale la pregunta por la cantidad.
+
+**Lo que sí aportará P29 aquí, y es parcial**: con la fase 4 hecha, el echo quedaría persistido en
+la conversación cerrada, y la lazy compaction —que **sí corrió**, a las 02:20:23— lo habría
+recogido en el resumen. El bot habría sabido que el operador confirmó el envío. No se calla, pero
+deja de responder a ciegas.
+
+**Y hay un agravante que no depende del operador**: la compaction produjo un resumen correcto que
+decía que el cliente ya había comprado, pagado los $55.000 y que se coordinaría el envío. El bot
+tenía esa memoria delante y aun así leyó «De una, gracias» como una compra nueva. El directive
+pesó más que el resumen.
+
+**Alcance al reabrir**: que la respuesta de un cliente a una conversación cerrada no arranque de
+cero pidiendo un pedido nuevo. Toca la consecuencia aceptada de ADR-009 §4, así que probablemente
+necesita ADR. **Se despacha junto con la fase 4 de P29, en ese orden y como un solo cierre**
+(decisión del 2026-09-07).
+Riesgo: [ADR] + [B].
 
 ### P32 · Placeholder de medios en el historial (mitad útil de P16, registrado 2026-09-01)
 **Qué**: `recent_messages` entrega `content: ""` cuando lo que llegó fue una imagen o un audio
@@ -890,11 +930,14 @@ reales.
    pasa a `Accepted`, entra al índice de `docs/decisions/README.md`, y se resuelve ahí la reserva
    del número 010 para P10. El despliegue **también recoge la clave de OpenAI nueva** (punto 1),
    porque el backend solo lee el secreto al arrancar.
-3. ~~**P31** (silencio post-venta)~~ ✅ **cerrado como decisión el 2026-09-05, sin implementar**.
-   Los puntos 3 y 6 del orden anterior **se funden**: la ventana temporal era un proxy de una señal
-   que ya llega al webhook, así que P29 los resuelve a los dos y P31 no tiene trabajo propio.
-   Ver P31 §"cerrado como decisión".
-4. **P29 acotado a echoes** — en curso. El `master` deja pasar `message_echoes[]`, el backend los
+3. **P31 reabierto** (2026-09-07). El cierre del 09-05 daba por hecho que P29 lo cubría entero y
+   no es así: la pausa expira —correctamente— cuando el cliente responde horas después, y la
+   conversación `closed` bifurca el diálogo igual. El rechazo de la ventana temporal sigue en pie;
+   lo que vuelve es el hueco de la conversación cerrada. **No se despacha solo**: va con el punto 4.
+4. **P29 fase 4 + P31, un solo cierre** (decidido el 2026-09-07). Primero la sesión de n8n, que
+   hace que el sistema vea al operador; después el hueco post-venta, que es backend y probablemente
+   ADR. En ese orden porque el segundo se evalúa mejor con echoes ya entrando.
+   P29 acotado a echoes — en curso. El `master` deja pasar `message_echoes[]`, el backend los
    persiste como outbound del operador, y una regla determinista pausa al bot tras un echo. Es la
    mitad cara de P29 y la que evita que el bot contradiga al humano delante del cliente. **Tercera
    ocurrencia real el 2026-08-30**, sobre una conversación que sigue `active`. **Fases 0–3 hechas**
@@ -977,7 +1020,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P28 | Gobierno de datos operativos en el NLG (llave/medios de pago inventados) | 🔴 registrado, no abierto | — |
 | P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 0–3 hechas en `feat/p29-echoes-operador`, con la migración `015` **aplicada en prod el 2026-09-05 14:45 UTC** antes del despliegue; faltan mergear/desplegar, la sesión de n8n (fase 4) y la verificación en prod (fase 5). El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
 | P30 | Sin validación de dirección de envío | 🟡 registrado — se propone fusionar en ADR-010 | — |
-| P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | ✅ **cerrado como decisión, sin implementar** (2026-09-05): la ventana temporal era un proxy de una señal que ya llega al webhook. Lo resuelve P29 por echoes. Mismo tratamiento que P23. El número no se recicla | deuda #14 (parcial) |
+| P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | 🔴 **REABIERTO 2026-09-07**. Se cerró el 09-05 dando por hecho que P29 lo cubría entero; la evidencia del 09-07 (conv `b313a570` → `b2bd2c3c`) muestra que no cubre al cliente que responde horas después a una conversación cerrada. El rechazo de la ventana temporal sigue en pie. Se despacha con la fase 4 de P29 | deuda #14 (parcial) |
 | P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
 | P33 | Orden entre migración y despliegue | 🟡 ADR-012 `Accepted` y ejercido con éxito 2026-09-04 (013 partida, 014 después); queda exigir `-- Orden:` en las próximas — la 015 ya lo trae | — |
 | P34 | El echo mata el turno en vuelo (bump de `strategy_version` → 409 stale) | 🔴 registrado 2026-09-05, no abierto; bloqueado por P5 | deuda #14 (resto) |
