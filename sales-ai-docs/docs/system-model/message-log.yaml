@@ -1,0 +1,219 @@
+component: MessageLog
+code: MSG
+layer: 3  # Dominio — PostgreSQL es ground truth
+
+summary: >
+  El trail de todo lo que se dijo en una conversación, en los dos sentidos y por
+  los tres autores. Es la única reconstrucción posible de un turno: los
+  postmortems de este proyecto se escriben leyendo `messages`, y el historial
+  que el LLM recibe en cada turno sale de aquí. Por eso las invariantes de este
+  componente no son sobre rendimiento ni sobre schema — son sobre VERACIDAD: que
+  lo que la tabla afirma haya pasado de verdad, y que lo que pasó esté en la
+  tabla. Las dos mitades están rotas hoy, en direcciones distintas.
+
+owns:
+  code:
+    - sales_agent_api/app/models/core.py
+    - sales_agent_api/app/services/ingest.py
+    - sales_agent_api/app/services/ingest_operator_echo.py
+    - sales_agent_api/app/services/agent_action.py
+  tables:
+    - messages
+    - audit_log
+  outside_repo:
+    - "n8n · Process Backend Response — decide si el outbound se envía"
+    - "n8n · el nodo que llama a Chakra HQ para enviar (sin continueOnFail)"
+
+invariants:
+
+  - id: INV-MSG-001
+    statement: >
+      Los mensajes son append-only. Ninguna ruta del backend actualiza ni borra
+      una fila de `messages` ni de `audit_log`.
+    why: >
+      Todo diagnóstico de este sistema se hace releyendo el trail meses después.
+      Una fila editada no deja rastro de haberlo sido, así que una sola edición
+      envenena todos los postmortems futuros sin que nadie pueda notarlo. Es
+      barato mantenerlo y carísimo recuperarlo.
+    refs: [ADR-013]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_system_model_guards.py::test_no_backend_path_updates_or_deletes_a_message
+        - tests/services/test_system_model_guards.py::test_no_backend_path_updates_or_deletes_an_audit_row
+
+  - id: INV-MSG-002
+    statement: >
+      Un mensaje entrante se persiste y se commitea ANTES de que el turno pueda
+      suprimirse. Los cuatro caminos de supresión retornan con el mensaje ya en
+      la base.
+    why: >
+      Hay cuatro razones para no contestar un mensaje (contenido ilegible,
+      operador presente, debounce, duplicado) y todas retornan temprano. Si el
+      orden fuera al revés, el mensaje desaparecería y el turno siguiente leería
+      un historial con un hueco. El comentario de `ingest.py` §8c lo dice sin
+      rodeos: "Order is not negotiable: persist, THEN suppress". Un guard en n8n
+      nunca habría llamado a /ingest y el mensaje se habría perdido.
+    refs: [P16, P29, deuda#19]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_ingest_suppression.py::test_unreadable_message_is_still_persisted
+        - tests/services/test_operator_pause.py::test_the_customer_message_is_persisted_before_the_turn_is_suppressed
+
+  - id: INV-MSG-003
+    statement: >
+      La autoría de un mensaje se lee de `author`, nunca de `direction`. Un echo
+      del operador es outbound Y author='operator'.
+    why: >
+      Hasta la migración 015, `direction='outbound'` significaba "lo dijo el
+      bot". Desde la 015 ya no: el operador también escribe outbound. Toda query
+      que pregunte "¿esto lo dijo el bot?" y siga mirando `direction` atribuye al
+      bot las palabras del humano — que es exactamente la colisión de las "dos
+      Sebastian" del 2026-08-19. `author` es nullable porque la 015 es aditiva,
+      así que las filas viejas se derivan de `direction` en `author_of()`.
+    refs: [ADR-013, migración-015, deuda#14]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_operator_pause.py::test_authorship_of_rows_written_before_migration_015
+        - tests/services/test_operator_pause.py::test_recent_messages_carries_authorship_in_temporal_order
+        - tests/services/test_operator_pause.py::test_only_the_operator_gets_a_marker
+        - tests/services/test_agent_action.py::test_the_breaker_does_not_count_the_operators_messages
+
+  - id: INV-MSG-004
+    statement: >
+      Un mensaje entrante se procesa exactamente una vez. La reentrega del mismo
+      `chakra_message_id` no escribe absolutamente nada.
+    why: >
+      Meta reentrega webhooks. Sin esto, una reentrega duplicaría el mensaje en
+      el historial, dispararía un turno de más y podría escribir una segunda
+      venta. La garantía es el UNIQUE de `messages.chakra_message_id`, no la
+      lógica de aplicación.
+    refs: [P11]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_ingest_operator_echo.py::test_a_redelivered_echo_raises_duplicate_and_writes_nothing
+        - tests/services/test_ingest_operator_echo.py::test_the_duplicate_check_is_the_wamid_not_the_text
+
+  - id: INV-MSG-005
+    statement: >
+      El orden del historial es cronológico según el reloj de Meta, no según el
+      nuestro.
+    why: >
+      El reloj del backend y el de Meta no coinciden, y el echo del operador
+      llega con retraso variable. Si ordenáramos por nuestro `created_at` de
+      inserción, un echo tardío se colaría después de la respuesta del bot y el
+      LLM leería la conversación en un orden que nunca ocurrió.
+    refs: [ADR-011]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_ingest_operator_echo.py::test_echo_is_stamped_with_metas_clock_not_ours
+        - tests/services/test_ingest_operator_echo.py::test_echo_without_a_timestamp_falls_back_to_wall_clock
+        - tests/services/test_operator_pause.py::test_the_window_is_measured_on_metas_clock_not_ours
+
+  - id: INV-MSG-006
+    statement: >
+      El cuerpo de un mensaje nunca aparece en un log ni en un evento de
+      auditoría.
+    why: >
+      Los logs de Azure no son un almacén de PII y `audit_log` se lee sin las
+      protecciones de la tabla de mensajes. Los eventos guardan la longitud del
+      texto, nunca el texto.
+    refs: [ADR-013]
+    status: partial
+    boundary: backend
+    enforcement:
+      kind: test
+      gap: >
+        Solo el camino del echo del operador está probado. El ingest normal y
+        agent_action no tienen prueba equivalente; el enmascarado de teléfono
+        (`_mask_phone`) tampoco. Nada impide hoy que un `logger.info` nuevo
+        imprima `content` en cualquiera de esas dos rutas.
+      tests:
+        - tests/services/test_ingest_operator_echo.py::test_the_echo_body_is_never_logged
+        - tests/services/test_ingest_operator_echo.py::test_audit_event_records_the_length_never_the_body
+
+  - id: INV-MSG-007
+    statement: >
+      Toda fila de `messages` corresponde a un mensaje que existió de verdad en
+      WhatsApp.
+    why: >
+      El outbound se persiste ANTES de enviarse: `agent_action.py` escribe la
+      fila y devuelve `approved`, y recién después n8n llama a Chakra HQ, sin
+      `continueOnFail`. Si el envío falla, la base afirma un envío que nunca
+      ocurrió: el historial se contamina, el LLM lee como dicho algo que el
+      cliente jamás vio, y el circuit breaker cuenta fantasmas. No es un
+      problema de idempotencia (eso es INV-MSG-008), es de veracidad.
+    refs: [deuda#18, P6]
+    status: violated
+    boundary: cross
+    enforcement:
+      kind: none
+
+  - id: INV-MSG-008
+    statement: >
+      Todo mensaje tiene un identificador externo estable que permite reconocerlo
+      si vuelve a llegar.
+    why: >
+      El inbound lo cumple vía `chakra_message_id` UNIQUE. El outbound del bot
+      no: 314 de 314 filas outbound sin él, medido el 2026-09-01. Sin
+      identificador no hay idempotencia de salida, y los duplicados son visibles
+      para el cliente — saludo repetido a 8,9 s e imagen repetida, ambos reales.
+      P29 movió la aguja apenas: los mensajes del operador son las primeras filas
+      outbound con `chakra_message_id` real, pero el outbound del BOT sigue sin
+      él, así que la invariante no se restaura.
+    refs: [deuda#11, P6]
+    status: violated
+    boundary: cross
+    enforcement:
+      kind: none
+
+  - id: INV-MSG-009
+    statement: >
+      El historial que lee el LLM representa el contenido real de cada mensaje.
+    why: >
+      Un medio entrante (imagen, audio) se persiste con `content` vacío, así que
+      `recent_messages` se lo entrega al modelo como si el cliente no hubiera
+      mandado nada. El 2026-08-26 el bot pidió un comprobante 64 segundos DESPUÉS
+      de haberlo recibido. Silenciar el turno (lo que hace hoy el guard de
+      contenido ilegible) evita responder a ciegas, pero no evita contradecir al
+      cliente en el turno siguiente: el hueco sigue en el historial.
+    refs: [P32, P16]
+    status: violated
+    boundary: backend
+    enforcement:
+      kind: none
+
+  - id: INV-MSG-010
+    statement: >
+      Todo mensaje entrante deja rastro en `audit_log`, se le responda o no.
+    why: >
+      Sin esto no se puede distinguir un turno suprimido por el guard de uno
+      suprimido por el debounce ni de uno perdido por un 500 — y el 2026-08-19 se
+      tragaron cuatro respuestas 500 en silencio dentro de una sola venta. Hay 36
+      inbound sin evento `message_ingest`. El camino nuevo de P29 sí escribe su
+      `turn_suppressed`; los otros tres retornan antes del `AuditLog`.
+    refs: [deuda#19, P29, deuda#12]
+    status: partial
+    boundary: backend
+    enforcement:
+      kind: test
+      gap: >
+        Solo la pausa por operador escribe su evento. El guard de contenido
+        ilegible, el debounce y el camino de duplicado siguen retornando antes
+        del AuditLog, que son tres de los cuatro caminos.
+      tests:
+        - tests/services/test_operator_pause.py::test_a_silenced_turn_writes_its_own_audit_event

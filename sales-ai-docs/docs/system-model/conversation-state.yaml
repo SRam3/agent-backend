@@ -1,0 +1,181 @@
+component: ConversationState
+code: CONV
+layer: 2  # Política — la máquina de estados y los gates del DAG
+
+summary: >
+  Dónde está una venta y qué se puede hacer con ella. Tres estados, un DAG de
+  checkpoints, y un contador de versión que decide si un turno en vuelo todavía
+  vale. Es la capa donde vive "el backend gobierna": el LLM no lee el estado, no
+  lo propone y no lo cambia. Las invariantes de aquí son sobre AUTORIDAD (quién
+  puede mover el estado) y sobre CONTINUIDAD (qué sobrevive al cierre) — y la
+  continuidad es hoy el hueco más caro del sistema.
+
+owns:
+  code:
+    - sales_agent_api/app/services/state_machine.py
+    - sales_agent_api/app/services/agent_action.py
+    - sales_agent_api/app/services/goal_strategy.py
+    - sales_agent_api/app/services/conversation_summary.py
+  tables:
+    - conversations
+    - client_users
+  outside_repo:
+    - "n8n · IF Should Respond — corta pre-LLM por estado"
+    - "PostgreSQL · clients.business_rules gobierna umbrales por tenant"
+
+invariants:
+
+  - id: INV-CONV-001
+    statement: >
+      Solo existen tres estados y las únicas transiciones posibles son las
+      declaradas en `STATES`. Toda escritura de estado pasa por
+      `validate_transition`.
+    why: >
+      El refactor del 2026-04-19 colapsó una máquina más grande a tres estados
+      justo porque los estados intermedios se volvían inalcanzables y nadie lo
+      notaba. La tabla es la definición; si alguien escribe un estado a mano en
+      un UPDATE, el resto del sistema deja de poder razonar sobre él.
+    refs: [ADR-007]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_system_model_guards.py::test_the_state_machine_has_exactly_the_three_declared_states
+        - tests/services/test_system_model_guards.py::test_every_declared_transition_validates
+        - tests/services/test_system_model_guards.py::test_every_undeclared_transition_is_refused
+
+  - id: INV-CONV-002
+    statement: >
+      `closed` es terminal. Ninguna conversación cerrada vuelve a `active` ni a
+      `human_handoff`.
+    why: >
+      `confirm_payment` NO bumpea `strategy_version`, así que un turno ya en
+      vuelo cuando el operador cierra la venta pasa el chequeo de staleness, ve
+      el `payment_confirmation` del operador en contexto, lo lee como
+      "checkpoints completos" y resucitaría la conversación a `human_handoff`.
+      Por eso el auto-escalate guarda `== "active"` y no `!= "human_handoff"`:
+      la diferencia entre las dos condiciones es una venta duplicada.
+    refs: [ADR-009, P11]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_agent_action.py::test_closed_conversation_is_never_resurrected_by_auto_escalate
+        - tests/services/test_confirm_payment.py::test_closed_without_payment_cannot_be_reconfirmed
+        - tests/services/test_system_model_guards.py::test_closed_is_terminal
+
+  - id: INV-CONV-003
+    statement: >
+      Un turno computado sobre un estado viejo no se aplica. Si el
+      `strategy_version` que trae la petición no coincide con el de la
+      conversación, `agent_action` rechaza con `StaleContextError`.
+    why: >
+      Cada turno son dos llamadas HTTP con una llamada al LLM en medio (ADR-003).
+      Entre la primera y la segunda, cualquier cosa puede haber movido el estado:
+      otro mensaje del cliente, el operador cerrando la venta, un echo. El
+      contador es la única defensa contra aplicar una decisión tomada sobre un
+      mundo que ya cambió.
+    refs: [ADR-003, P34]
+    status: unverified
+    boundary: backend
+    enforcement:
+      kind: none
+      note: >
+        NINGUNA prueba ejercita `StaleContextError`. El mecanismo del que depende
+        toda la arquitectura de dos llamadas no tiene un solo test — se buscó
+        `strategy_version` en toda la suite y aparece únicamente como dato de
+        fixture, nunca como condición. Y P34 predice que el echo del operador
+        será el primer productor real de 409 del sistema, así que esto pasa de
+        teórico a caliente en cuanto entre la fase 4 de P29.
+
+  - id: INV-CONV-004
+    statement: >
+      Toda conversación pertenece a un tenant, y toda query que la toca filtra
+      por `client_id`.
+    why: >
+      El aislamiento entre negocios es por aplicación, no por RLS. No hay red de
+      seguridad en la base: una query sin el filtro entrega los datos de un
+      cliente a otro y nada la detiene.
+    refs: [deuda#5]
+    status: partial
+    boundary: backend
+    enforcement:
+      kind: test
+      gap: >
+        Las pruebas cubren el camino del echo y las statements del breaker, no
+        cada query del sistema. Nada verifica que un servicio NUEVO filtre por
+        client_id; hasta que exista RLS (deuda #5) esto se sostiene por
+        disciplina y revisión.
+      tests:
+        - tests/services/test_ingest_operator_echo.py::test_every_write_carries_the_client_id_of_the_caller
+        - tests/services/test_ingest_operator_echo.py::test_an_echo_for_an_unknown_tenant_is_rejected_before_anything_is_written
+        - tests/services/test_agent_action.py::test_recent_outbound_stmt_is_tenant_safe_ordered_and_limited
+
+  - id: INV-CONV-005
+    statement: >
+      El bot no se repite. Un tercer outbound idéntico consecutivo se suprime y
+      escala a `human_handoff` en vez de enviarse.
+    why: >
+      El primer `human_handoff` real en producción, el 2026-07-18, fue un loop
+      bot-a-bot contra el bot de vuelos de LATAM. Sin el breaker, dos máquinas se
+      hablan indefinidamente y el costo lo paga el tenant. El breaker cuenta solo
+      outbounds del BOT: un echo del operador entre dos respuestas idénticas no
+      debe romper la cuenta.
+    refs: [P8, ADR-009, ADR-013]
+    status: partial
+    boundary: backend
+    enforcement:
+      kind: test
+      gap: >
+        El disparo exige texto IDÉNTICO exacto. Un loop con texto variable no lo
+        activa, y ese caso sigue abierto como P10 — está documentado en
+        docs/registros/registro-P8-limitaciones.md.
+      tests:
+        - tests/services/test_agent_action.py::test_loop_fires_on_third_identical
+        - tests/services/test_agent_action.py::test_loop_does_not_fire_on_second_identical
+        - tests/services/test_agent_action.py::test_loop_does_not_fire_on_non_consecutive_repeat
+        - tests/services/test_agent_action.py::test_loop_comparison_is_exact_not_fuzzy
+        - tests/services/test_agent_action.py::test_breaker_fires_escalates_and_suppresses_response
+        - tests/services/test_agent_action.py::test_the_breaker_does_not_count_the_operators_messages
+
+  - id: INV-CONV-006
+    statement: >
+      La relación con el cliente sobrevive al cierre de la conversación. Un
+      cliente que vuelve es reconocido y su contexto anterior está disponible.
+    why: >
+      `closed` termina la VENTA, no la relación. Pero el 2026-09-07 un cliente
+      respondió 3 h 07 min después de que su conversación se cerrara: el ingest
+      abrió una conversación nueva sin historial y el bot leyó un «de una,
+      gracias» como una compra nueva. La pausa por presencia de operador expira a
+      los 30 minutos, y debe expirar, así que ese hueco no lo tapa P29.
+    refs: [P31, ADR-009]
+    status: violated
+    boundary: backend
+    enforcement:
+      kind: none
+
+  - id: INV-CONV-007
+    statement: >
+      Al cerrar una conversación, su resumen se persiste en el perfil del
+      cliente, de modo que el turno siguiente lo tenga.
+    why: >
+      La "memoria del vendedor" es la promesa central del producto. Estuvo rota
+      de forma total, no intermitente: 0 de 35 client_users con
+      `last_conversation_summary` al 2026-08-19, con un cliente de junio saludado
+      como desconocido. La causa raíz no era código sino un secreto: la clave de
+      OpenAI del backend era inválida (401) mientras n8n usaba otra credencial
+      distinta, y por eso el bot conversaba mientras la memoria moría en
+      silencio.
+    refs: [deuda#7, P4, ADR-010]
+    status: unverified
+    boundary: cross
+    enforcement:
+      kind: manual
+      note: >
+        El secreto se corrigió el 2026-09-04 y la revisión --0000058 arranca
+        diciendo "OpenAI key: loaded from Key Vault". Pero NADIE ha observado
+        todavía un resumen persistido en producción. Sigue `unverified` a
+        propósito hasta que haya una fila con `last_conversation_summary`; la
+        verificación es una query, no un test.

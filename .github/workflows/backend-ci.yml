@@ -1,17 +1,23 @@
 name: Backend CI
 
-# Runs on every branch and every PR that touches code, tests, or this workflow.
-# Docs-only changes are skipped on purpose: nothing they change can break a test.
+# Runs on every branch and every PR that touches code, tests, the system model
+# or this workflow. Docs-only changes are still skipped on purpose — but the
+# system model is NOT docs for this purpose: it declares which test guards which
+# invariant, so editing it can break the build exactly like editing code.
 on:
   push:
     paths:
       - "sales_agent_api/**"
       - "tests/**"
+      - "tools/**"
+      - "sales-ai-docs/docs/system-model/**"
       - ".github/workflows/**"
   pull_request:
     paths:
       - "sales_agent_api/**"
       - "tests/**"
+      - "tools/**"
+      - "sales-ai-docs/docs/system-model/**"
       - ".github/workflows/**"
 
 # A newer push to the same branch makes the previous run obsolete.
@@ -35,7 +41,9 @@ jobs:
           cache-dependency-path: sales_agent_api/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r sales_agent_api/requirements.txt
+        run: |
+          pip install -r sales_agent_api/requirements.txt
+          pip install -r tools/requirements.txt
 
       # The WHOLE suite, deliberately. This used to run two files out of eight
       # (test_goal_strategy.py and test_health.py), so a PR could go green while
@@ -53,3 +61,19 @@ jobs:
           SALES_AI_SERVICE_TOKEN: ci-test-token
           ENV: dev
         run: pytest tests/ -v --tb=short
+
+      # The system model (sales-ai-docs/docs/system-model/) declares, per
+      # component, what must always be true and which test proves it. This step
+      # is what stops those declarations from rotting into prose: an invariant
+      # cannot claim to hold without a test that exists, a broken one cannot be
+      # recorded without pointing at its debt or P front, and renaming a test
+      # breaks the build instead of silently orphaning an invariant.
+      #
+      # It runs AFTER the suite on purpose. If a test fails, that is the news;
+      # a model mismatch on top of it is noise.
+      - name: Check the system model against the repo
+        env:
+          DATABASE_URL: postgresql+asyncpg://user:pass@localhost:5432/test
+          SALES_AI_SERVICE_TOKEN: ci-test-token
+          ENV: dev
+        run: python tools/check_invariants.py --report

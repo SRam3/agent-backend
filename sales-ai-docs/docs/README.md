@@ -13,6 +13,7 @@ Esta carpeta contiene documentación versionada del proyecto. **Lo que NO está 
 | Por qué decidimos algo | `decisions/` (ADRs) |
 | Cómo está pensada la arquitectura | `architecture/overview.md` |
 | Definiciones de términos del dominio | `architecture/glossary.md` |
+| **Qué debe ser siempre cierto, y qué lo prueba** | **`system-model/`** |
 | Qué pasó en un incidente y qué aprendimos | `postmortems/` |
 | Limitaciones conocidas de algo ya entregado | `registros/` |
 
@@ -25,6 +26,9 @@ Esta carpeta contiene documentación versionada del proyecto. **Lo que NO está 
 1. **Operacional** (`CLAUDE.md`): qué es el sistema HOY. Vive, se actualiza, no tiene historia.
 2. **Histórico** (`decisions/`): por qué tomamos cada decisión. Append-only, fechado, inmutable.
 3. **Conceptual** (`architecture/`): cómo está pensado el sistema. Cambia raramente.
+4. **Verificable** (`system-model/`): qué debe ser siempre cierto en cada componente crítico,
+   y qué prueba lo respalda. Es el único documento que **falla en CI** cuando deja de ser
+   cierto — los otros tres solo se pudren en silencio. Ver `system-model/README.md`.
 
 **Triggers de actualización**:
 

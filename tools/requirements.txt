@@ -1,0 +1,4 @@
+# Dependencias del verificador de invariantes (tools/check_invariants.py).
+# Deliberadamente SEPARADAS de sales_agent_api/requirements.txt: el checker
+# corre en CI y en local, nunca dentro de la imagen de producción.
+PyYAML>=6.0

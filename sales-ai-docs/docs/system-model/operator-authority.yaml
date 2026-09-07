@@ -1,0 +1,209 @@
+component: OperatorAuthority
+code: OP
+layer: 2  # Política — quién tiene autoridad sobre qué hecho
+
+summary: >
+  El humano y la máquina comparten un chat, y este componente define quién manda
+  sobre qué. Hay exactamente un hecho cuya verdad vive fuera de todo el sistema
+  — que un pago es real — y pertenece al operador. Hay un canal por el que el
+  operador entra al historial sin decidir nada. Y hay una regla de convivencia:
+  mientras un humano atiende, el bot calla. Las tres cosas están implementadas y
+  probadas en el backend; la tercera no está viva en producción, y esa distinción
+  es la razón de ser de este archivo.
+
+owns:
+  code:
+    - sales_agent_api/app/services/confirm_payment.py
+    - sales_agent_api/app/services/ingest_operator_echo.py
+    - sales_agent_api/app/api/v1/operator.py
+    - sales_agent_api/app/api/v1/ingest_operator_echo.py
+  tables:
+    - conversations
+    - messages
+    - audit_log
+  outside_repo:
+    - "n8n · operator_confirm_telegram — el botón que llama a confirm-payment"
+    - "n8n · fase 4 de P29, el despacho de echoes — NO EXISTE todavía"
+    - "WhatsApp Business App — de donde el operador escribe"
+
+invariants:
+
+  - id: INV-OP-001
+    statement: >
+      El pago solo lo confirma el operador. Un `payment_confirmation` propuesto
+      por el LLM se descarta siempre, en cualquier turno y con cualquier
+      contexto.
+    why: >
+      "Ya pagué" no es prueba de pago, y el backend nunca ve el comprobante — la
+      imagen no le llega. El 2026-07-20 esto costó una venta duplicada real, que
+      hubo que corregir a mano en el perfil del cliente. La defensa no es el
+      prompt: es `OPERATOR_ONLY_FIELDS`, que descarta el campo antes de que
+      llegue a los gates, así que ni siquiera un turno con todos los
+      prerrequisitos presentes lo cuela.
+    refs: [ADR-009, P11, P3]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_agent_action.py::test_payment_is_the_only_operator_only_field
+        - tests/services/test_agent_action.py::test_payment_confirmation_rejected_even_with_every_prereq_present
+        - tests/services/test_agent_action.py::test_payment_does_not_sneak_through_when_user_confirmation_rejected_same_turn
+        - tests/services/test_agent_action.py::test_llm_payment_claim_records_no_sale_and_moves_nothing
+        - tests/services/test_agent_action.py::test_payment_claim_alone_writes_nothing
+
+  - id: INV-OP-002
+    statement: >
+      Confirmar un pago es idempotente por el HECHO, nunca por el estado. Repetir
+      la confirmación no escribe una segunda venta, venga de donde venga la
+      conversación.
+    why: >
+      El botón de Telegram se puede tocar dos veces y Telegram reintenta solo.
+      La versión original ataba la idempotencia a `state == closed`, y la venta
+      duplicada del 2026-07-20 entró justo por ahí: la conversación había quedado
+      en `human_handoff`, el guard vio "no está closed" y escribió la segunda
+      venta. Mirar el pago en contexto en vez del estado cierra el hueco para
+      cualquier estado en que la conversación haya quedado.
+    refs: [ADR-009, P11]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_confirm_payment.py::test_bug_sequence_yields_exactly_one_sale
+        - tests/services/test_confirm_payment.py::test_closed_and_paid_is_idempotent
+        - tests/services/test_confirm_payment.py::test_paid_in_human_handoff_is_idempotent
+        - tests/services/test_confirm_payment.py::test_paid_in_active_is_idempotent
+
+  - id: INV-OP-003
+    statement: >
+      No se cierra una venta que el cliente nunca confirmó. Sin
+      `user_confirmation` en contexto, la confirmación del operador se rechaza.
+    why: >
+      Protege contra confirmar la conversación equivocada, que es un error de
+      dedo a un toque de distancia cuando el operador atiende varias a la vez.
+      El pago del operador es autoridad sobre el pago, no sobre el pedido.
+    refs: [ADR-009]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_confirm_payment.py::test_active_without_user_confirmation_refused
+        - tests/services/test_confirm_payment.py::test_empty_context_refused
+
+  - id: INV-OP-004
+    statement: >
+      El echo del operador es CONTEXTO, nunca HECHO. No toca `extracted_context`,
+      no bumpea `strategy_version`, no transiciona el estado y no dispara la
+      compaction.
+    why: >
+      El operador escribe en lenguaje natural desde la app de WhatsApp, sin
+      pasar por ningún gate. Si sus palabras pudieran mover el DAG, el sistema
+      tendría un segundo camino sin validar hacia los mismos checkpoints que
+      tanto trabajo costó cerrarle al LLM. El echo entra al historial para que el
+      modelo lo lea, y ahí se acaba su autoridad: exactamente dos filas escritas,
+      el mensaje y su evento de auditoría.
+    refs: [ADR-013, P29]
+    status: holds
+    boundary: backend
+    enforcement:
+      kind: test
+      tests:
+        - tests/services/test_ingest_operator_echo.py::test_echo_never_touches_the_conversation_context
+        - tests/services/test_ingest_operator_echo.py::test_echo_never_bumps_the_strategy_version
+        - tests/services/test_ingest_operator_echo.py::test_echo_never_transitions_the_state
+        - tests/services/test_ingest_operator_echo.py::test_an_echo_never_triggers_the_lazy_compaction
+        - tests/services/test_ingest_operator_echo.py::test_echo_writes_exactly_two_rows_and_no_more
+
+  - id: INV-OP-005
+    statement: >
+      Mientras un humano está atendiendo, el bot calla. Un echo del operador
+      silencia los turnos siguientes de esa conversación durante la ventana
+      configurada.
+    why: >
+      El 2026-08-19 el bot y el operador escribieron a la vez y el bot inventó
+      una llave de pago ("1234") entre la promesa del humano y la llave real que
+      el humano mandó después. Contradecir al operador frente al cliente es el
+      peor fallo posible del sistema: destruye la confianza en el humano, no solo
+      en el bot. La ventana se refresca con cada echo, así que se extiende sola
+      mientras el humano siga escribiendo.
+    refs: [ADR-013, P29, deuda#14, P34]
+    status: partial
+    boundary: backend
+    enforcement:
+      kind: test
+      gap: >
+        El turno EN VUELO no queda cubierto: si el cliente escribe, n8n llama al
+        LLM, y el operador escribe durante esa llamada, ese turno se envía igual
+        — el caso "llave 1234" queda parcialmente descubierto. Eso es P34, y está
+        bloqueado por P5 porque hoy un 409 cae en n8n como `backend_error`,
+        indistinguible de un backend caído.
+      tests:
+        - tests/services/test_operator_pause.py::test_an_echo_five_minutes_ago_silences_the_next_turn
+        - tests/services/test_operator_pause.py::test_the_window_opens_thirty_minutes_before_the_inbound
+        - tests/services/test_operator_pause.py::test_the_lookup_takes_the_most_recent_echo_so_the_pause_extends
+        - tests/services/test_operator_pause.py::test_the_lookup_is_scoped_to_this_conversation
+        - tests/services/test_operator_pause.py::test_no_echo_in_the_window_lets_the_bot_answer_normally
+        - tests/services/test_operator_pause.py::test_the_window_is_configurable_per_tenant
+        - tests/services/test_operator_pause.py::test_a_malformed_window_falls_back_instead_of_disabling_the_pause
+
+  - id: INV-OP-006
+    statement: >
+      Todo mensaje que el operador manda desde la app de WhatsApp entra al
+      historial.
+    why: >
+      Es el supuesto del que cuelgan INV-OP-004 e INV-OP-005 enteras. Sin
+      echoes, el backend tiene la pausa implementada y probada pero sin nada
+      sobre qué dispararla, y sigue siendo tan ciego al operador como antes de
+      P29. Los echoes morían en dos nodos que solo saben leer `messages[]`: la
+      whitelist producía `null`, `If Message Exists` mandaba la ejecución a
+      `Stop` marcada `success` en ~130 ms, sin log y sin error, al menos 17
+      veces en la retención.
+    refs: [P29, deuda#14, ADR-013]
+    status: unverified
+    boundary: n8n
+    enforcement:
+      kind: manual
+      note: >
+        ⚠️ LA DOCUMENTACIÓN DEL BACKEND ESTÁ DESACTUALIZADA SOBRE ESTO. CLAUDE.md
+        y el ROADMAP dicen "falta la fase 4" y "cero filas con author='operator'";
+        se escribieron el 2026-09-07 a las 06:48 y la sesión de n8n ocurrió a las
+        08:03 del mismo día. La fase 4 SÍ está desplegada: `cafe_arenillo_v2.json`
+        (updatedAt 2026-09-07T13:02:22Z) trae los tres nodos nuevos —
+        `Switch Payload Kind`, `Normalize Echo`, `POST Operator Echo` — y `master`
+        pasó de 10 a 15 asignaciones con `payload_kind` y los cuatro campos del
+        echo.
+
+        Queda `unverified`, no `holds`, porque el mecanismo está desplegado pero
+        NADIE ha observado todavía una fila con `author='operator'` en la base.
+        La verificación es una query, no un test:
+
+            SELECT count(*), max(created_at) FROM messages WHERE author = 'operator';
+
+        Si devuelve > 0, esto pasa a `holds` con la fecha como evidencia. Si
+        sigue en 0 después de que el operador escriba, vuelve a `violated` y hay
+        un bug en la rama nueva del Switch.
+
+  - id: INV-OP-007
+    statement: >
+      Toda acción del operador queda registrada con su autoría en `audit_log`.
+    why: >
+      El operador es la única autoridad sobre el pago, así que su rastro es lo
+      único que permite auditar una venta después. `sale_closed` se escribe con
+      `actor_type='operator'`, y así fue como se pudo reconstruir y corregir la
+      venta duplicada de julio (`profile_corrected`, 2026-07-31 20:31:19 UTC,
+      purchase_count 2 → 1).
+    refs: [ADR-009, ADR-013]
+    status: partial
+    boundary: backend
+    enforcement:
+      kind: test
+      gap: >
+        El echo y la pausa escriben su evento y están probados. El cierre de
+        venta (`sale_closed`) NO tiene prueba: `test_confirm_payment.py` cubre
+        solo `evaluate_confirmation`, que es puro, y el camino que toca la base
+        queda para los tests de integración que no existen (deuda #1).
+      tests:
+        - tests/services/test_ingest_operator_echo.py::test_echo_writes_its_own_audit_event
+        - tests/services/test_operator_pause.py::test_a_silenced_turn_writes_its_own_audit_event
