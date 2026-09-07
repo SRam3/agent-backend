@@ -15,7 +15,9 @@
 > sección "Orden sugerido de cierre". Esto aplica en particular a lo que vino de
 > `docs/north-star.md`, que sigue siendo contexto de dirección de solo lectura.
 >
-> Última actualización: 2026-09-05 (P29 acotado a echoes: ADR-013 aceptado, migración 015 y
+> Última actualización: 2026-09-06 (arreglo de la clave de OpenAI de n8n tras dos días y medio de
+> silencio; saludo repetido corregido; P35 registrado a partir de la conversación de prueba).
+> Anterior: 2026-09-05 (P29 acotado a echoes: ADR-013 aceptado, migración 015 y
 > el backend de las fases 1–3; P31 cerrado como decisión — ver
 > `docs/briefs/brief-impl-P29-echoes-operador.md`).
 > Anterior: 2026-09-04 (ADR-010 desplegado, migraciones 013 y 014 aplicadas).
@@ -501,6 +503,47 @@ ingesta de echoes es lo contrario de baby-steps.
 
 **Precondición: P5 vivo**, y un `suppressed_reason` propio para este caso.
 Riesgo: [B] + [N8N].
+
+### P35 · Medir cuándo el LLM narra un cambio sin emitirlo (registrado 2026-09-06, NO abierto)
+
+**Qué**: ADR-010 §6 invalida la confirmación y re-resume cuando el pedido cambia, pero **la
+detección del cambio sigue siendo del LLM**. El backend gobierna el resumen y el juicio de la
+confirmación; no gobierna la extracción. Si el modelo describe una corrección en prosa y deja
+`extracted_data` vacío, la §6 no tiene nada que invalidar y la venta se cierra sobre datos viejos,
+en silencio.
+
+**Evidencia (2026-09-06)**: conversación de prueba, conv `b313a570`. El cliente corrige la
+dirección; el bot responde «apunto la dirección como Carrera 84F #3C-39, **Unidad** Campestre al
+Parque»; el `extracted_data` de ese turno es `{}`; `extracted_context.shipping_address` sigue
+diciendo «**Unidsd** Campestre al Parque», el fingerprint no cambia, `user_confirmation` sigue en
+`true` y la venta cierra así. Ni un `side_effect`, ni un warning, ni una fila distinta. Es la nota
+as-built de ADR-010 del mismo día.
+
+**Este frente es INSTRUMENTACIÓN, no un cambio de formato.** El reflejo —pasar el chat call a
+`json_schema` estricto, que es la deuda #8— puede ser la respuesta, pero hoy se apoyaría en **un
+solo caso observado**, en una prueba, con el operador haciendo de cliente. Ese cambio toca el nodo
+`Build LLM Prompt` del workflow vivo y el contrato de todas las respuestas del modelo. No se hace
+sobre una anécdota.
+
+**Qué medir, en orden de baratura**:
+1. **La tasa de extracción vacía.** `messages.extracted_data` ya guarda lo que el modelo propuso
+   en cada turno — con eso se puede medir hoy, sobre el histórico, sin desplegar nada. Empezar por
+   ahí: cuántos turnos devuelven `{}`, y cuántos de esos caen **después** de
+   `order_summary_sent_at`, que es la ventana donde una corrección no reportada hace daño real.
+2. **Un evento propio cuando el turno no mergea nada habiendo resumen vigente.** Barato y
+   determinista. Genera ruido en turnos benignos («ok», «gracias»), así que es señal para
+   diagnóstico, no para alertar.
+3. **Sólo entonces**, decidir con la cifra en la mano: si el esquema estricto se justifica, si
+   basta una línea de directive cuando hay resumen vigente, o si el volumen no lo amerita.
+
+**Por qué no cerrar el hueco «detectando la corrección» en el backend**: para saber que el cliente
+corrigió un dato hay que leer lenguaje natural, y eso es el LLM. No hay versión determinista de esa
+detección. Lo que sí es determinista es **notar que el modelo no reportó nada**, y eso es lo que se
+instrumenta.
+
+**Relación con P30**: son hermanos, no el mismo. P30 es que la dirección no se valida cuando llega;
+P35 es que la corrección de una dirección puede no llegar nunca.
+Riesgo: [B] acotado mientras sea medición. [N8N] el día que se toque el formato de salida.
 ### P22 · Motor ejecutable sin LLM (remedia deuda #1)
 **Qué**: correr el DAG completo (ingest → estrategia → validación → side effects) con
 stubs deterministas para clasificación de intención y extracción de campos
@@ -938,8 +981,9 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
 | P33 | Orden entre migración y despliegue | 🟡 ADR-012 `Accepted` y ejercido con éxito 2026-09-04 (013 partida, 014 después); queda exigir `-- Orden:` en las próximas — la 015 ya lo trae | — |
 | P34 | El echo mata el turno en vuelo (bump de `strategy_version` → 409 stale) | 🔴 registrado 2026-09-05, no abierto; bloqueado por P5 | deuda #14 (resto) |
+| P35 | Medir cuándo el LLM narra un cambio del pedido sin emitirlo (precondición silenciosa de ADR-010 §6) | 🔴 registrado 2026-09-06, no abierto — **instrumentación primero**, no cambio de formato | deuda #8 (parcial) |
 
-**Siguiente número libre: P35.**
+**Siguiente número libre: P36.**
 
 ---
 
