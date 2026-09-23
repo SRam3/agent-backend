@@ -50,3 +50,10 @@ Introducir un campo `strategy_version` en `conversations` que se incrementa ató
 Revisar esta decisión si:
 - Aparecen patrones de uso donde el `strategy_version` se vuelve un cuello de botella (improbable, es solo un entero)
 - Se necesita reconstruir histórico de directivas para analytics avanzado — entonces `strategy_snapshot` JSONB en `conversations` puede no bastar y haya que considerar tabla de history
+
+## Nota as-built (2026-09-22) — la guarda tiene prueba
+
+La comparación es de igualdad (`!=`): rechaza una versión vieja y también una más nueva. Probado
+en `INV-CONV-003`, con verificación por mutación. Una petición stale no escribe nada, y el
+endpoint responde `409` con `error: "stale_context"` y hace rollback. Queda sin probar el lado
+de n8n: hoy ese 409 se ve como `backend_error` (P5).
