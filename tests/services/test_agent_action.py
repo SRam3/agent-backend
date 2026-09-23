@@ -1113,3 +1113,103 @@ def test_a_rejected_confirmation_is_visible_per_condition():
 
     assert f"warning:confirmation_rejected_{NO_SUMMARY}" in result["side_effects"]
     assert conversation.extracted_context.get("user_confirmation") is None
+
+
+# ---------------------------------------------------------------------------
+# INV-CONV-003 — a turn computed on an old state is never applied (ADR-003)
+#
+# Each turn is two HTTP calls with the LLM in between. The strategy_version the
+# ingest hands out is the only thing that tells /agent/action whether the world
+# moved in the meantime. Until these tests, nothing in the suite exercised it.
+# ---------------------------------------------------------------------------
+import pytest
+
+from app.services.agent_action import StaleContextError
+
+
+def test_a_matching_strategy_version_applies_the_turn():
+    """The ordinary turn: same version as the conversation → persisted."""
+    conversation = _make_conversation()
+    session = _summary_session(conversation)
+
+    result = _run(session, response_text="Hola, ¿qué café te gustaría?")
+
+    assert result["approved"] is True
+    assert any(isinstance(obj, Message) for obj in session.added)
+
+
+def test_an_older_strategy_version_is_rejected_as_stale():
+    """Another ingest bumped the version while the LLM was thinking: the turn
+    was decided on a world that no longer exists, and nothing of it is written."""
+    conversation = _make_conversation(extracted_context={"full_name": "Ana Ruiz"})
+    session = _summary_session(conversation)
+
+    with pytest.raises(StaleContextError):
+        asyncio.run(
+            process_agent_action(
+                session=session,
+                client_id=_CLIENT_ID,
+                conversation_id=_CONV_ID,
+                strategy_version=2,
+                response_text="Listo, ya quedó tu pedido.",
+                extracted_data={"quantity": 5},
+            )
+        )
+
+    assert session.added == []
+    assert len(session.executed) == 1  # only the conversation load
+    assert conversation.extracted_context == {"full_name": "Ana Ruiz"}
+    assert conversation.state == "active"
+    assert conversation.strategy_version == 3
+
+
+def test_a_newer_strategy_version_is_also_stale():
+    """The guard is equality, not "not older": a version the conversation never
+    issued is just as untrustworthy as an old one."""
+    session = _summary_session(_make_conversation())
+
+    with pytest.raises(StaleContextError):
+        asyncio.run(
+            process_agent_action(
+                session=session,
+                client_id=_CLIENT_ID,
+                conversation_id=_CONV_ID,
+                strategy_version=4,
+                response_text="Hola",
+            )
+        )
+
+    assert session.added == []
+
+
+def test_an_echo_in_flight_leaves_the_turn_applicable():
+    """Coherence with INV-OP-004: an operator echo that lands between the two
+    calls does NOT bump the version, so the in-flight turn is still applied.
+    That is exactly the uncovered half of INV-OP-005 (P34) — if an echo ever
+    starts bumping, this test is the one that has to change on purpose."""
+    from tests.services.test_ingest_operator_echo import (
+        FakeSession as EchoSession,
+        _conversation as echo_conversation,
+        _results as echo_results,
+        _run as run_echo,
+    )
+
+    handed_out = 23  # what the ingest returned to n8n before the LLM call
+    echoed = echo_conversation(strategy_version=handed_out)
+    run_echo(EchoSession(echo_results(echoed)))
+
+    conversation = _make_conversation()
+    conversation.strategy_version = echoed.strategy_version
+    session = _summary_session(conversation)
+
+    result = asyncio.run(
+        process_agent_action(
+            session=session,
+            client_id=_CLIENT_ID,
+            conversation_id=_CONV_ID,
+            strategy_version=handed_out,
+            response_text="Hola, ¿qué café te gustaría?",
+        )
+    )
+
+    assert result["approved"] is True

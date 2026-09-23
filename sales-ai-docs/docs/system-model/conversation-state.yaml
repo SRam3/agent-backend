@@ -78,17 +78,32 @@ invariants:
       contador es la única defensa contra aplicar una decisión tomada sobre un
       mundo que ya cambió.
     refs: [ADR-003, P34]
-    status: unverified
+    status: holds
     boundary: backend
     enforcement:
-      kind: none
+      kind: test
       note: >
-        NINGUNA prueba ejercita `StaleContextError`. El mecanismo del que depende
-        toda la arquitectura de dos llamadas no tiene un solo test — se buscó
-        `strategy_version` en toda la suite y aparece únicamente como dato de
-        fixture, nunca como condición. Y P34 predice que el echo del operador
-        será el primer productor real de 409 del sistema, así que esto pasa de
-        teórico a caliente en cuanto entre la fase 4 de P29.
+        Verificado por mutación el 2026-09-22. Sin la guarda, solo se ponen en
+        rojo los tests de versión vieja y nueva: el resto de la suite ya pasaba
+        la versión que coincide, pero ninguna prueba ejercitaba el RECHAZO.
+        Cambiar `!=` por `<` o `>` pone en rojo uno de los dos; cambiar el 409
+        o la clave `stale_context` del endpoint pone en rojo el test HTTP, que
+        es el contrato del que depende P5.
+
+        Sobre quién produce el 409: hoy el echo del operador NO bumpea la
+        versión (INV-OP-004), así que no produce 409; por eso el turno en vuelo
+        se escapa, que es el hueco de INV-OP-005. El echo solo produciría 409
+        si P34 se implementa. El único productor posible hoy es un segundo
+        inbound del cliente que bumpea la versión antes del /agent/action del
+        primero. `test_an_echo_in_flight_leaves_the_turn_applicable` fija esa
+        coherencia: si el echo empieza a bumpear, ese test cambia a propósito.
+      tests:
+        - tests/services/test_agent_action.py::test_a_matching_strategy_version_applies_the_turn
+        - tests/services/test_agent_action.py::test_an_older_strategy_version_is_rejected_as_stale
+        - tests/services/test_agent_action.py::test_a_newer_strategy_version_is_also_stale
+        - tests/services/test_agent_action.py::test_an_echo_in_flight_leaves_the_turn_applicable
+        - tests/services/test_ingest_operator_echo.py::test_echo_never_bumps_the_strategy_version
+        - tests/test_agent_endpoint.py::test_a_stale_turn_answers_409_stale_context_and_rolls_back
 
   - id: INV-CONV-004
     statement: >

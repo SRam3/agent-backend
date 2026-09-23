@@ -294,6 +294,8 @@ Reintentar un turno después de 5 s de debounce es otra decisión y no entra aqu
 **Trampa medida**: las únicas ejecuciones en error de la instancia son de un workflow ajeno
 (`Predicción horaria → Telegram`, 7 fallos diarios desde al menos el 08-19). Una alerta basada en
 `status=error` nace ahogada en ruido que no es del producto.
+**Lado backend verificado (2026-09-22)**: una petición stale responde `409 stale_context`, con
+rollback y sin escribir nada. Hay test y mutación (`INV-CONV-003`). Lo que falta es solo n8n.
 **Se despacha junto con P9** para tocar el workflow vivo una sola vez, con export antes y después.
 Riesgo: [N8N].
 
