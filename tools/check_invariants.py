@@ -122,6 +122,31 @@ def registries() -> dict[str, set[int]]:
     return _REGISTRIES
 
 
+def validate_roadmap(model: Model) -> None:
+    """Un frente ✅ en el registro no puede seguir con su sección bajo ABIERTOS.
+
+    Pasó con P14: cerrado el 2026-08-19 y todavía 83 líneas bajo 🔴 ABIERTOS un
+    mes después. Al cerrar, el texto va tal cual a `registros/roadmap-historico.md`
+    y en el ROADMAP queda una línea en ✅ CERRADO.
+    """
+    text = ROADMAP.read_text(encoding="utf-8")
+    reg_start = text.find("\n## Registro canónico de frentes P\n")
+    reg_end = text.find("\n## ", reg_start + 1)
+    closed = {
+        int(m.group(1))
+        for m in re.finditer(r"^\| P(\d+) \|[^|]*\| ✅", text[reg_start:reg_end], re.MULTILINE)
+    }
+    open_start = text.find("\n## 🔴 ABIERTOS")
+    open_end = text.find("\n## ✅ CERRADO")
+    for m in re.finditer(r"^### P(\d+) ·", text[open_start:open_end], re.MULTILINE):
+        if int(m.group(1)) in closed:
+            model.fail(
+                "sales-ai-docs/docs/ROADMAP.md",
+                f"P{m.group(1)} está ✅ en el registro pero su sección sigue bajo ABIERTOS; "
+                "moverla tal cual a docs/registros/roadmap-historico.md",
+            )
+
+
 # --------------------------------------------------------------------------- #
 # Colección de pytest
 # --------------------------------------------------------------------------- #
@@ -351,6 +376,7 @@ def main() -> int:
     test_ids = None if args.no_tests else collect_test_ids()
 
     model = Model()
+    validate_roadmap(model)
     seen_ids: dict[str, str] = {}
 
     for path in paths:

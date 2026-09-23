@@ -139,6 +139,8 @@ leen igual. Aquí no.
 5. `holds` y `partial` en el backend exigen `kind: test` con tests reales.
 6. `partial` exige `gap`.
 7. `violated` exige `refs`.
+8. Un frente ✅ en el registro del ROADMAP no conserva su sección bajo ABIERTOS: su texto
+   va tal cual a `docs/registros/roadmap-historico.md`.
 
 ---
 
