@@ -165,6 +165,10 @@ invariants:
       abrió una conversación nueva sin historial y el bot leyó un «de una,
       gracias» como una compra nueva. La pausa por presencia de operador expira a
       los 30 minutos, y debe expirar, así que ese hueco no lo tapa P29.
+      Medido el 2026-09-22: en 6 de 10 ventas el cliente volvió a escribir en
+      menos de 48 h y cayó en una conversación nueva sin historial. El
+      2026-09-03 el bot le reabrió un pedido completo a un cliente 24 min
+      después de su compra, con los datos del perfil, y le pidió confirmarlo.
     refs: [P31, ADR-009]
     status: violated
     boundary: backend
