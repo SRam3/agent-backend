@@ -56,7 +56,7 @@ La consecuencia práctica es que **un frente P deja de ser "un bug" y pasa a ser
 | Frente | Invariante que restaura |
 |---|---|
 | P6 | `INV-MSG-007` (veracidad del outbound) y `INV-MSG-008` (idempotencia) |
-| P29 fase 4 | `INV-OP-006` — hoy `violated` porque n8n no despacha echoes |
+| P29 fase 5 | `INV-OP-006` — `unverified`: la rama de echoes está viva desde el 2026-09-07 y no ha llegado ningún echo |
 | P31 | `INV-CONV-006` (la relación sobrevive al cierre) |
 | P32 | `INV-MSG-009` (el historial refleja el contenido real) |
 | P34 | el hueco declarado de `INV-OP-005` |

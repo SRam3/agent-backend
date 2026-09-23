@@ -15,7 +15,10 @@
 > sección "Orden sugerido de cierre". Esto aplica en particular a lo que vino de
 > `docs/north-star.md`, que sigue siendo contexto de dirección de solo lectura.
 >
-> Última actualización: 2026-09-07 (P31 reabierto: la fase 4 de P29 no cubre al cliente que
+> Última actualización: 2026-09-22 (sincronización con la verificación read-only del 2026-09-12:
+> deuda #7 resuelta y P4 cerrado — 4 resúmenes persistidos —; la fase 4 de P29 está viva desde
+> el 09-07 y falta la 5, porque aún no ha llegado ningún echo; deuda #20 registrada).
+> Anterior: 2026-09-07 (P31 reabierto: la fase 4 de P29 no cubre al cliente que
 > responde horas después a una conversación cerrada — evidencia en la entrada de P31).
 > Anterior: 2026-09-06 (arreglo de la clave de OpenAI de n8n tras dos días y medio de
 > silencio; saludo repetido corregido; P35 registrado a partir de la conversación de prueba).
@@ -874,6 +877,7 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
   `diagnostico-2026-06-14-P4-compaction.md`. n8n llama a OpenAI con otra credencial, y por eso el bot
   conversa mientras la memoria muere en silencio. **El fix es rotar el secreto, no código.** Hasta
   que se rote, la deuda #7 sigue abierta: 0 de 39 `client_users` con `last_conversation_summary`.
+  **Resuelta y verificada el 2026-09-12**: 4 `client_users` con resumen persistido.
 - **ADR-008 · Multiidioma + teléfono** (detección de idioma en backend; validación E.164-laxa).
 - **ADR-009 · Lazo de handoff** (endpoint confirm-payment + auth escopada + Telegram +
   corte de respuesta n8n + registro de venta + cierre a closed). Probado e2e.
@@ -923,6 +927,8 @@ reales.
    punto 2. **Hecho el 2026-09-04**: la revisión `--0000058` arrancó con
    `OpenAI key: loaded from Key Vault`. Falta verificar que la compaction corra de verdad en la
    próxima conversación de un cliente recurrente — hasta leerlo, la deuda #7 no se cierra.
+   ✅ **Leído el 2026-09-12**: `SELECT count(*) FROM client_users WHERE profile ? 'last_conversation_summary'`
+   → 4 (sesión read-only). Deuda #7 resuelta, P4 cerrado.
 2. **P15 vía ADR-010, en cuatro pasos y en este orden**: ~~aplicar el DDL~~ ✅ (2026-09-04
    02:09:28 UTC) → ~~mergear y desplegar~~ ✅ (PR #68, revisión `--0000058`, 02:47 UTC) →
    ~~aplicar datos y prompt (`014`)~~ ✅ (02:52 UTC) → **verificar en una conversación real**,
@@ -941,9 +947,11 @@ reales.
    persiste como outbound del operador, y una regla determinista pausa al bot tras un echo. Es la
    mitad cara de P29 y la que evita que el bot contradiga al humano delante del cliente. **Tercera
    ocurrencia real el 2026-08-30**, sobre una conversación que sigue `active`. **Fases 0–3 hechas**
-   (ADR-013, migración `015`, endpoint y pausa); **falta la fase 4**, que es la sesión de n8n del
-   punto 5, y la verificación en prod.
-5. **P5 + P9 + el switch de echoes de P29** en un solo toque del workflow vivo, con **re-export de
+   (ADR-013, migración `015`, endpoint y pausa). ✅ **Fase 4 desplegada el 2026-09-07 13:02 UTC.**
+   **Falta la fase 5**, la verificación en prod: al 2026-09-12, cero filas con `author='operator'`
+   porque de 101 ejecuciones posteriores al despliegue ninguna trae `message_echoes`. La rama del
+   Switch no ha corrido, no está rota.
+5. **P5 + P9 + ~~el switch de echoes de P29~~** (✅ el switch se desplegó solo el 2026-09-07) en un solo toque del workflow vivo, con **re-export de
    los tres workflows antes y después**: el respaldo del repo dejó de ser el vivo el 08-29. Se junta
    con la fase 4 de P29 a propósito: `map_webhook_data_arenillo` es el nodo que causó el drop
    silencioso de P14 y no se toca dos veces.
@@ -993,7 +1001,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P1 | Sincronizar documentación con la realidad | ✅ | — |
 | P2 | Persistir `quantity`/`grind`/`roast` (ORDER_FIELDS) | ✅ | — |
 | P3 | Cerrar gate permeable de `payment_confirmation` | ✅ *Superseded by ADR-009* | — |
-| P4 | Resucitar la lazy-compaction + hacerla ruidosa | 🟡 secreto rotado el 2026-09-04 y cargado por la revisión `--0000058`; falta verificar que la compaction corra en una conversación real | deuda #3, #7 |
+| P4 | Resucitar la lazy-compaction + hacerla ruidosa | ✅ secreto rotado el 2026-09-04 y cargado por la revisión `--0000058`; **verificado en prod el 2026-09-12**: 4 resúmenes persistidos | deuda #3, #7 |
 | P5 | Alerta de fallo silencioso en n8n (409/5xx/500) | 🔴 mecanismo corregido 2026-09-01; **precondición de P34** | deuda #12 |
 | P6 | Idempotencia outbound (texto e imagen) | ⬜ [ADR] | deuda #11 |
 | P7 | Debounce: race + conexión ocupada | ⬜ [ADR] | deuda #2 |
@@ -1018,7 +1026,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P26 | Consentimiento, canal autorizado y opt-out | 🟡 [ADR][DB] | — |
 | P27 | Motor de campañas outbound (remarketing) | 🔵 bloqueado por P24, P26 | — |
 | P28 | Gobierno de datos operativos en el NLG (llave/medios de pago inventados) | 🔴 registrado, no abierto | — |
-| P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 0–3 hechas en `feat/p29-echoes-operador`, con la migración `015` **aplicada en prod el 2026-09-05 14:45 UTC** antes del despliegue; faltan mergear/desplegar, la sesión de n8n (fase 4) y la verificación en prod (fase 5). El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
+| P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 0–3 mergeadas y desplegadas (PR #70), con la migración `015` **aplicada en prod el 2026-09-05 14:45 UTC** antes del despliegue; fase 4 (n8n) desplegada el 2026-09-07. **Falta la fase 5**: observar el primer echo real (0 filas al 2026-09-12, porque no ha llegado ninguno). El echo pisa `display_name`: deuda #20. El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
 | P30 | Sin validación de dirección de envío | 🟡 registrado — se propone fusionar en ADR-010 | — |
 | P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | 🔴 **REABIERTO 2026-09-07**. Se cerró el 09-05 dando por hecho que P29 lo cubría entero; la evidencia del 09-07 (conv `b313a570` → `b2bd2c3c`) muestra que no cubre al cliente que responde horas después a una conversación cerrada. El rechazo de la ventana temporal sigue en pie. Se despacha con la fase 4 de P29 | deuda #14 (parcial) |
 | P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
