@@ -74,9 +74,12 @@ invariants:
       bot". Desde la 015 ya no: el operador también escribe outbound. Toda query
       que pregunte "¿esto lo dijo el bot?" y siga mirando `direction` atribuye al
       bot las palabras del humano — que es exactamente la colisión de las "dos
-      Sebastian" del 2026-08-19. `author` es nullable porque la 015 es aditiva,
-      así que las filas viejas se derivan de `direction` en `author_of()`.
-    refs: [ADR-013, migración-015, deuda#14]
+      Sebastian" del 2026-08-19. `author` es nullable porque la 015 es aditiva.
+      El código solo escribe `author` para el operador: las filas de cliente y
+      bot nacen NULL y se derivan de `direction` en `author_of()` (161 filas
+      así entre el 2026-09-06 y el 2026-09-22). El comportamiento es correcto;
+      un conteo en SQL sobre `author` no lo es (deuda #21).
+    refs: [ADR-013, migración-015, deuda#14, deuda#21]
     status: holds
     boundary: backend
     enforcement:

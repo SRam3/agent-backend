@@ -7,9 +7,9 @@ summary: >
   sobre qué. Hay exactamente un hecho cuya verdad vive fuera de todo el sistema
   — que un pago es real — y pertenece al operador. Hay un canal por el que el
   operador entra al historial sin decidir nada. Y hay una regla de convivencia:
-  mientras un humano atiende, el bot calla. Las tres cosas están implementadas y
-  probadas en el backend; la tercera no está viva en producción, y esa distinción
-  es la razón de ser de este archivo.
+  mientras un humano atiende, el bot calla. Las tres están vivas en producción
+  desde el 2026-09-15. Hasta esa fecha la tercera solo existía en el backend, y
+  esa distinción fue la razón de ser de este archivo.
 
 owns:
   code:
@@ -23,7 +23,7 @@ owns:
     - audit_log
   outside_repo:
     - "n8n · operator_confirm_telegram — el botón que llama a confirm-payment"
-    - "n8n · fase 4 de P29, el despacho de echoes — NO EXISTE todavía"
+    - "n8n · fase 4 de P29, el despacho de echoes — vivo desde 2026-09-07, primer echo 2026-09-15"
     - "WhatsApp Business App — de donde el operador escribe"
 
 invariants:
@@ -131,7 +131,8 @@ invariants:
         y el echo no trae `name`, así que un nombre bueno escrito desde un
         inbound queda reemplazado por un username, y ese campo llega al prompt
         (prompt_context.py:311). Ningún test lo ve: los de echo usan el mismo
-        nombre de punta a punta. Deuda #20.
+        nombre de punta a punta. Deuda #20. Observado en producción en 2 de 2
+        clientes que recibieron un echo (2026-09-15 y 2026-09-23).
       tests:
         - tests/services/test_ingest_operator_echo.py::test_echo_never_touches_the_conversation_context
         - tests/services/test_ingest_operator_echo.py::test_echo_never_bumps_the_strategy_version
@@ -162,6 +163,8 @@ invariants:
         — el caso "llave 1234" queda parcialmente descubierto. Eso es P34, y está
         bloqueado por P5 porque hoy un 409 cae en n8n como `backend_error`,
         indistinguible de un backend caído.
+        Observado en producción: la primera supresión real fue el 2026-09-15 a
+        las 21:43:58 (`turn_suppressed`, reason `operator_active`).
       tests:
         - tests/services/test_operator_pause.py::test_an_echo_five_minutes_ago_silences_the_next_turn
         - tests/services/test_operator_pause.py::test_the_window_opens_thirty_minutes_before_the_inbound
@@ -184,35 +187,21 @@ invariants:
       `Stop` marcada `success` en ~130 ms, sin log y sin error, al menos 17
       veces en la retención.
     refs: [P29, deuda#14, ADR-013]
-    status: unverified
+    status: holds
     boundary: n8n
     enforcement:
       kind: manual
       note: >
-        La fase 4 está desplegada desde el 2026-09-07: `cafe_arenillo_v2`
-        (updatedAt 2026-09-07T13:02:22Z, igual al export del repo) trae
-        `Switch Payload Kind`, `Normalize Echo` y `POST Operator Echo`, y
-        `master` pasó de 10 a 15 asignaciones.
-
-        Verificado el 2026-09-12 (sesión read-only): 0 filas con
-        author='operator'. La rama del Switch está bien y nunca ha corrido:
-
-          - 101 ejecuciones de `cafe_arenillo_v2` posteriores al despliegue
-            (73 `statuses`, 28 `messages`), cero `message_echoes`.
-          - Chakra sí entrega echoes: el último llegó a `master` el
-            2026-09-06 23:13 UTC (exec 12126), antes del despliegue.
-            Reproducido contra las asignaciones y el `Normalize Echo`
-            desplegados, sale un cuerpo que satisface `OperatorEchoRequest`.
-
-        Sigue `unverified`, no `violated`: lo que falta es observar un echo
-        real después del despliegue, no arreglar código. La verificación es
-        una query:
+        Observado en producción (análisis read-only del 2026-09-22): 3 echoes
+        con author='operator'. El primero llegó el 2026-09-15 a las 21:43 UTC;
+        el último, el 2026-09-23 a las 02:01 (exec 13401 de n8n, respuesta
+        `ingested`). La verificación es una query:
 
             SELECT count(*), max(created_at) FROM messages WHERE author = 'operator';
 
-        Si devuelve > 0, esto pasa a `holds` con la fecha y P29 cierra. Si
-        sigue en 0 después de que el operador escriba, el problema está antes
-        de n8n (suscripción de Chakra), no en el Switch.
+        Es una FOTO: el boundary es `n8n` y CI no lo re-verifica. Si el
+        operador escribe y el conteo no sube, el problema está antes de n8n
+        (suscripción de Chakra).
 
   - id: INV-OP-007
     statement: >

@@ -189,3 +189,115 @@ historial de versiones: el archivo es el único respaldo).
 | 7 | Memoria entre conversaciones rota EN PROD: la lazy compaction nunca ha persistido un resumen. **Medido 2026-08-19: 0 de 35 client_users con `last_conversation_summary`; 27 profiles vacíos** — es total, no intermitente. Re-saludo re-confirmado ese día (cliente del 06-12 saludado como desconocido). **CAUSA RAÍZ ENCONTRADA 2026-09-01: la clave de OpenAI del backend es inválida.** `AuthenticationError: 401 invalid_api_key` sobre el secreto de OpenAI en Key Vault, en el ERROR con traza que P4 instaló — log de consola del backend del 2026-08-30T21:53:34.869Z. Era la candidata 2 del postmortem P4. n8n usa otra credencial y por eso el bot conversa mientras la memoria muere. **El fix es rotar el secreto, no código**. **RESUELTA el 2026-09-04**: la clave nueva se había creado bajo otro nombre de secreto y el backend solo lee el suyo; ya está copiada al que corresponde y verificada contra la API con la petición exacta de la compaction (`json_schema` estricto → HTTP 200), lo que descarta las candidatas 1 y 3. La revisión `--0000058` (2026-09-04 02:47 UTC) ya la cargó: el log de arranque dice `OpenAI key: loaded from Key Vault`. **VERIFICADA EN PROD el 2026-09-12**: 4 `client_users` con resumen persistido (`SELECT count(*) FROM client_users WHERE profile ? 'last_conversation_summary'`, sesión read-only; el resumen vive en `profile` JSONB, no es columna). Funciona hoy, 4 de 35+. `INV-CONV-007` → `holds`, como foto: nada en CI lo re-verifica si la clave vuelve a morir | Alta | Sí (la "memoria del vendedor" es promesa central) |
 | 10 | ~~Corte n8n~~ **resuelto** (ADR-009 §3: n8n corta pre-LLM por estado y pre-envío por `approved`+estado; el loop escalado ahora notifica por Telegram). Queda: loop de texto VARIABLE no cubierto (trigger solo texto idéntico exacto) — ver `docs/registros/registro-P8-limitaciones.md`, hoy frente **P10**; e2e del corte pendiente (primer handoff real post-fix). ⚠️ *Nota histórica: antes del 2026-06-14, `#10` designaba el "reset por idle 30 min" que este archivo documentaba pero que nunca existió en código (cerrado por P1). Los documentos de junio usan ese sentido viejo.* | Media (era Alta) | Menor |
 | 13 | ~~El early-return del debounce coalescido devolvía un dict de 2 claves → **500 en CADA coalescencia**~~ **RESUELTA** (PR #63, desplegada 2026-08-23): `build_suppressed_response()` construye la respuesta completa para los tres caminos de supresión (`debounce`, `duplicate`, `unreadable_content`) y `reason` es campo del schema. Verificado en prod 2026-08-26 (execs 11144/11146/11150). Nota: el 500 nunca mató la ejecución porque `POST Ingest Message` lleva `continueOnFail: true`. **La race de fondo sigue abierta: es P7.** | ~~Alta~~ | ~~Sí~~ |
+
+## Traslado del 2026-09-22 (2) — análisis read-only de producción
+
+### Encabezado — actualización anterior
+
+> Última actualización: 2026-09-22 (lo cerrado se movió tal cual a
+> `docs/registros/roadmap-historico.md`; aquí queda una línea por cerrado).
+
+### P29 · sección completa
+
+### P29 · Presencia de operador: el bot no sabe cuándo un humano está atendiendo (registrado 2026-08-19, **ABIERTO y acotado a echoes el 2026-09-05**)
+**Qué**: cuando el operador escribe manualmente por WhatsApp, el sistema queda ciego y el
+bot sigue activo: los mensajes del humano no se persisten (no pasan por el webhook), el LLM
+razona sobre un diálogo al que le falta la mitad, y no existe ninguna forma de callar al
+bot (el único freno automático es el circuit breaker).
+**Evidencia**: 2026-08-19 — colisión real de "dos Sebastian": la clienta respondía al
+operador y el bot interpretaba esas respuestas como propias; el bot inventó la "llave 1234"
+ENTRE la promesa del operador ("ya te comparto la llave") y la llave real. Testimonio del
+operador: "no entré a confirmar rápidamente, me quedé atendiendo porque vi el bot muy
+perdido" — cuando el bot falla, el humano va al chat, no a Telegram; el lazo de ADR-009
+asume lo contrario.
+**Segunda ocurrencia real (2026-08-26), con el mecanismo ya identificado**: cerrar la venta
+**reinicia** al bot en vez de silenciarlo. El operador pulsó el botón a las 17:38:38 (`sale_closed`);
+el cliente escribió un mensaje corto a las 17:41:12 y, como la conversación estaba `closed`, el
+ingest **creó otra desde cero** (v1, sin historial) y el bot saludó de nuevo, usando el nombre de
+pila y ofreciendo ayuda — a un cliente que acababa de comprar y
+mientras el operador atendía a mano. Idéntico al 2026-08-19 con otra clienta: once días, dos ventas,
+mismo comportamiento. El guard de contenido ilegible no aplica aquí ni podría (el disparador es texto
+legible). Detalle en `docs/postmortems/diagnostico-2026-08-29-comprobante-ciego-y-direccion-perdida.md`.
+**Toca la consecuencia aceptada de ADR-009** ("el bot acompaña en active hasta el botón") y
+es insumo directo de la decisión P23 (estados de espera explícitos). Deuda observable: #14.
+
+**Decidido y en curso (ADR-013, 2026-09-05)**. La pregunta "¿Chakra webhookea los echoes?"
+tiene respuesta: **sí**. El payload crudo está en el diagnóstico del 2026-08-22 §1.1
+(`exec 10678`), con `changes[0].field = "smb_message_echoes"` y el mensaje en
+`message_echoes[]`. Muere en dos nodos que solo saben leer `messages[]`: el `Set` whitelist
+`map_webhook_data_arenillo` produce `null`, y `If Message Exists` manda la ejecución a `Stop`
+marcada `success` en ~130 ms. La identidad sobrevive intacta: `contacts[0].user_id` está en
+**247 de 247** payloads y el whitelist ya lo copia desde P14.
+
+Las otras dos opciones se descartaron y quedan registradas en ADR-013: el botón "tomo la
+conversación" y el endpoint de pausa manual dependen de que el operador avise, y el testimonio
+del 08-19 dice justo lo contrario.
+
+**Qué hace el alcance acotado**: el sistema **ve** al operador (sus mensajes se persisten con
+`author='operator'` y entran al historial que el LLM lee) y se **calla** mientras el humano
+atiende (supresión con vencimiento de 30 min, refrescada por cada echo, sin cambio de estado).
+
+**Qué NO hace, y hay que decirlo así**:
+- **No mata el turno que ya está en vuelo.** Si el cliente escribe, n8n llama al LLM y
+  mientras tanto el operador escribe, ese turno aprueba y envía igual. Es exactamente el caso
+  "llave 1234" del 08-19, y queda **parcialmente descubierto**. Es **P34**.
+- **No reactiva automáticamente** más allá del vencimiento de la ventana.
+- **No construye vista de operador** — sigue siendo deuda #4.
+- **No es una capa de post-venta** — eso depende de P24.
+
+**Fases**: 0 ADR-013 ✅ · 1 migración `015` (`author` + backfill) · 2 endpoint
+`POST /api/v1/ingest/operator-echo` · 3 pausa en el ingest + evento de auditoría + autoría en
+`recent_messages` · 4 sesión n8n única con P5 y P9, re-export antes y después · 5 verificación
+en prod con un echo real. **Las fases 2 y 3 se despliegan sin la 4 sin riesgo de regresión**:
+el endpoint queda vivo sin tráfico y la pausa nunca dispara porque no hay filas con
+`author='operator'`.
+
+**Dos hallazgos del análisis que el brief no traía**, ambos porque el código asumía que todo
+outbound es del bot, y ambos ya corregidos en la fase 3: el circuit breaker de P8 se diluía si
+un mensaje del operador caía entre dos respuestas idénticas, y el prompt de la compaction
+habría resumido al perfil del cliente, como dicho por el bot, lo que prometió el humano.
+
+Brief: `docs/briefs/brief-impl-P29-echoes-operador.md`. Decisión: `ADR-013`.
+Riesgo: [ADR] + [DB] + [B] + [N8N].
+
+### Orden de cierre · revisión del 2026-09-01 y lista anterior
+
+**Revisado el 2026-09-01** contra el sistema vivo (auditoría §10). Qué cambió respecto del orden
+anterior, y por qué: sube al punto 1 rotar la clave de OpenAI, porque cierra la deuda #7 sin escribir
+código; **P5 deja de ser higiene intercalada** y sube, porque es la única forma de enterarse de que el
+sistema falló; **P16 (bytes) y P22 salen de los primeros ocho**, porque son lo interesante y no lo que
+desbloquea ventas; y entran P31, P32 y P33, que son baratos y atacan daño ya observado en clientes
+reales.
+
+1. ✅ **Rotar el secreto de OpenAI** — hecho el 2026-09-04 y verificado el 2026-09-12 (histórico).
+2. **P15 vía ADR-010, en cuatro pasos y en este orden**: ~~aplicar el DDL~~ ✅ (2026-09-04
+   02:09:28 UTC) → ~~mergear y desplegar~~ ✅ (PR #68, revisión `--0000058`, 02:47 UTC) →
+   ~~aplicar datos y prompt (`014`)~~ ✅ (02:52 UTC) → **verificar en una conversación real**,
+   que es lo único que queda. El envío a Manizales quedó confirmado por el negocio. Al mergear: ADR-010
+   pasa a `Accepted`, entra al índice de `docs/decisions/README.md`, y se resuelve ahí la reserva
+   del número 010 para P10. El despliegue **también recoge la clave de OpenAI nueva** (punto 1),
+   porque el backend solo lee el secreto al arrancar.
+3. **P31 reabierto** (2026-09-07). El cierre del 09-05 daba por hecho que P29 lo cubría entero y
+   no es así: la pausa expira —correctamente— cuando el cliente responde horas después, y la
+   conversación `closed` bifurca el diálogo igual. El rechazo de la ventana temporal sigue en pie;
+   lo que vuelve es el hueco de la conversación cerrada. **No se despacha solo**: va con el punto 4.
+4. **P29 fase 4 + P31, un solo cierre** (decidido el 2026-09-07). Primero la sesión de n8n, que
+   hace que el sistema vea al operador; después el hueco post-venta, que es backend y probablemente
+   ADR. En ese orden porque el segundo se evalúa mejor con echoes ya entrando.
+   P29 acotado a echoes — en curso. El `master` deja pasar `message_echoes[]`, el backend los
+   persiste como outbound del operador, y una regla determinista pausa al bot tras un echo. Es la
+   mitad cara de P29 y la que evita que el bot contradiga al humano delante del cliente. **Tercera
+   ocurrencia real el 2026-08-30**, sobre una conversación que sigue `active`. **Fases 0–3 hechas**
+   (ADR-013, migración `015`, endpoint y pausa). ✅ **Fase 4 desplegada el 2026-09-07 13:02 UTC.**
+   **Falta la fase 5**, la verificación en prod: al 2026-09-12, cero filas con `author='operator'`
+   porque de 101 ejecuciones posteriores al despliegue ninguna trae `message_echoes`. La rama del
+   Switch no ha corrido, no está rota.
+5. **P5 + P9 + ~~el switch de echoes de P29~~** (✅ el switch se desplegó solo el 2026-09-07) en un solo toque del workflow vivo, con **re-export de
+   los tres workflows antes y después**: el respaldo del repo dejó de ser el vivo el 08-29. Se junta
+   con la fase 4 de P29 a propósito: `map_webhook_data_arenillo` es el nodo que causó el drop
+   silencioso de P14 y no se toca dos veces.
+6. **P32** (placeholder de medios en el historial) — backend puro, cierra "pidió el comprobante que
+   ya tenía" sin abrir la descarga de bytes. **Sube**, porque el punto que ocupaba este lugar se
+   fundió con el 4.
+7. **P17** y decisión de **P20**. Sesión corta, entre fixes.
+8. **Medios de pago gobernados por el backend**, como sección nueva de ADR-010 en lugar de abrir P28.
