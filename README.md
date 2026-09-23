@@ -1,9 +1,11 @@
 # Sales AI Agent — Backend
 
-Vendedor por WhatsApp para **Café Arenillo**. Un cliente escribe, el bot conversa con él, arma el pedido y un humano confirma el pago.
+Plataforma para que **empresas vendan por WhatsApp**. Un cliente escribe, un asistente conversa con él en nombre del negocio, arma el pedido y una persona del negocio confirma el pago.
+
+Es **multi-negocio**: cada empresa tiene su catálogo, sus reglas y su tono, y sus datos están separados de los demás. Hoy opera con su primer negocio en producción; lo que es común a todos y lo que queda específico de cada uno se irá definiendo con los siguientes.
 
 > **La idea central: la IA conversa, el backend decide.**
-> El modelo de lenguaje escribe las respuestas y *propone* datos ("el cliente se llama Ana"). El backend valida cada propuesta con reglas fijas antes de guardarla. Los precios, el total, el orden del pedido y la confirmación del pago nunca los decide la IA.
+> El modelo de lenguaje escribe las respuestas y *propone* datos ("el cliente se llama Ana", "quiere 2 unidades"). El backend valida cada propuesta con reglas fijas antes de guardarla. Los precios, el total, el orden del pedido y la confirmación del pago nunca los decide la IA.
 
 ```mermaid
 flowchart LR
@@ -50,7 +52,25 @@ flowchart LR
 | **n8n** | Recibe el webhook, llama al backend, llama a la IA y envía la respuesta | No guarda estado ni decide nada del pedido |
 | **Backend** (este repo) | Guarda todo, decide qué falta, valida lo que la IA propone, arma el resumen con precios | No genera lenguaje |
 | **IA** | Conversa con el cliente y extrae datos del texto | No tiene herramientas ni memoria propia; no confirma pagos |
-| **Operador** | Atiende cuando hace falta y confirma el pago desde Telegram | — |
+| **Operador** (persona del negocio) | Atiende cuando hace falta y confirma el pago desde Telegram | — |
+
+### Qué configura cada negocio
+
+Cada empresa es un *tenant*: toda petición trae su identificador (`X-Client-ID`) y toda consulta a la base filtra por él.
+
+```mermaid
+flowchart LR
+    subgraph N["🏢 Configuración de un negocio"]
+        direction TB
+        P["🗣️ Personalidad y tono<br/>(prompt del asistente)"]
+        C["📦 Catálogo y precios"]
+        R["📋 Reglas de negocio<br/>envíos · medios de pago · descuentos · pausas"]
+        M["🤖 Modelo de IA y temperatura"]
+    end
+    N --> E["⚙️ Motor común<br/>flujo de venta · validaciones · memoria · estados"]
+```
+
+Cambiar precios, tarifas de envío o medios de pago es un cambio de datos, no de código. Algunas partes del flujo todavía nacieron del primer negocio (por ejemplo, los detalles de pedido que se capturan); generalizarlas es trabajo pendiente.
 
 ---
 
@@ -121,7 +141,7 @@ Tres reglas protegen el cierre:
 
 | Momento | Quién decide | Regla |
 |---|---|---|
-| **Resumen del pedido** | Backend | Cuando el pedido está completo (producto, cantidad, molienda, nombre, teléfono, ciudad y dirección), el backend **reemplaza** el texto de la IA por un resumen con precio, envío y total calculados por él. Si la ciudad no tiene tarifa, dice que el envío se confirma aparte. ([ADR-010](sales-ai-docs/docs/decisions/ADR-010-backend-gobierna-resumen.md)) |
+| **Resumen del pedido** | Backend | Cuando el pedido está completo (producto, cantidad, detalles del producto, nombre, teléfono, ciudad y dirección), el backend **reemplaza** el texto de la IA por un resumen con precio, envío y total calculados por él. Si la ciudad no tiene tarifa, dice que el envío se confirma aparte. ([ADR-010](sales-ai-docs/docs/decisions/ADR-010-backend-gobierna-resumen.md)) |
 | **Confirmación del cliente** | Backend | Solo vale si el resumen se envió, sigue vigente, el "sí" llegó **después** del resumen y ese mensaje no cambia el pedido. Si el cliente corrige algo, la confirmación se anula y sale un resumen nuevo. |
 | **Pago** | Solo el operador | Si la IA dice "ya pagó", se descarta siempre. El pago lo confirma el operador con un botón en Telegram. Confirmar dos veces no crea dos ventas. ([ADR-009](sales-ai-docs/docs/decisions/ADR-009-handoff-closure-loop.md)) |
 
@@ -131,11 +151,11 @@ sequenceDiagram
     participant B as Backend
     participant T as Telegram (operador)
 
-    B->>C: 🧾 "Va el pedido: 2 bolsas… total $85.000. ¿Todo bien?"
+    B->>C: 🧾 "Va el pedido: 2 unidades… total $85.000. ¿Todo bien?"
     C->>B: "Sí"
     B->>B: ✅ confirmación válida (llegó después del resumen)
     B->>T: aviso "venta lista" con botón
-    C-->>T: (el cliente paga y manda el comprobante)
+    Note over C,T: el cliente paga y manda el comprobante por WhatsApp;<br/>el operador lo revisa
     T->>B: 💳 Confirmar pago
     B->>B: registra la venta y cierra la conversación
 ```
