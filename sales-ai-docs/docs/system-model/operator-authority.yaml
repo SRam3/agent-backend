@@ -64,11 +64,22 @@ invariants:
       en `human_handoff`, el guard vio "no está closed" y escribió la segunda
       venta. Mirar el pago en contexto en vez del estado cierra el hueco para
       cualquier estado en que la conversación haya quedado.
-    refs: [ADR-009, P11]
-    status: holds
+    refs: [ADR-009, P11, deuda#1]
+    status: partial
     boundary: backend
     enforcement:
       kind: test
+      gap: >
+        Las pruebas ejercitan `evaluate_confirmation`, que es pura: deciden
+        BIEN si escribir. El camino que escribe de verdad no tiene test de
+        integración (deuda #1), y además reusa tres privadas de otro módulo:
+        `confirm_payment()` llama `_fetch_product_price`, `_merge_profile` y
+        `_bump_lifecycle_stage` de `agent_action.py`. Un refactor de esos
+        guiones bajos pensado para el turno del agente cambia la venta sin
+        que nada aquí se ponga rojo. Lo único que lo vigila es
+        `test_private_cross_module_imports_are_exactly_the_declared_ones`,
+        que detecta si el acoplamiento cambia de forma, no si cambia el
+        comportamiento.
       tests:
         - tests/services/test_confirm_payment.py::test_bug_sequence_yields_exactly_one_sale
         - tests/services/test_confirm_payment.py::test_closed_and_paid_is_idempotent

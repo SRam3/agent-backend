@@ -132,12 +132,31 @@ leen igual. Aquí no.
    componente que lo declara.
 2. Toda ruta de `owns.code` existe. Un rename de servicio rompe el modelo en
    vez de pudrirlo.
-3. Todo `ADR-NNN` referenciado resuelve a un archivo de `docs/decisions/`.
+3. Todo `ADR-NNN` referenciado resuelve a un archivo de `docs/decisions/`, y
+   todo `PN` o `deuda#N` a una fila de su registro canónico en el ROADMAP.
 4. **Todo test declarado existe en la colección de pytest.** Renombrar un test
    rompe la build en vez de dejar la invariante huérfana en silencio.
 5. `holds` y `partial` en el backend exigen `kind: test` con tests reales.
 6. `partial` exige `gap`.
 7. `violated` exige `refs`.
+
+---
+
+## Acoplamientos entre módulos
+
+Casi todo el backend se habla por funciones públicas. Hay tres excepciones, y
+son las que un refactor rompe sin avisar:
+
+| Acoplamiento | Qué mueve si lo tocás | Qué lo cubre |
+|---|---|---|
+| `agent_action` y `goal_strategy` → `order_summary` (públicas) | La compuerta de confirmación y la directiva del DAG viven en el módulo del resumen de ADR-010 | Los tests de `compute_context_updates` y `blocking_order_details` usan el módulo real, sin mocks |
+| `confirm_payment` → 3 privadas de `agent_action` | El camino del pago del operador | Nada de comportamiento: hueco de `INV-OP-002`, deuda #1 |
+| `ingest_operator_echo` → 3 privadas de `ingest` | El echo resuelve cliente y conversación con el código del ingest normal | Por ahí entra la deuda #20: hueco de `INV-OP-004` |
+
+`test_private_cross_module_imports_are_exactly_the_declared_ones` (en
+`tests/services/test_system_model_guards.py`) escanea `app/` y falla si aparece
+un `_privado` importado desde otro módulo que no esté en su lista, o si
+desaparece uno. Esta tabla se actualiza junto con esa lista.
 
 ---
 
