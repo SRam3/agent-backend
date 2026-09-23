@@ -13,6 +13,7 @@ que todavía no existen. Es una red gruesa, no fina: atrapa el UPDATE escrito co
 el ORM, no uno escondido en un `text()` con SQL crudo. Se declara así en el
 modelo y no se pretende más.
 """
+import ast
 import os
 import re
 import sys
@@ -147,3 +148,50 @@ def test_an_unknown_state_is_refused_on_both_sides():
         validate_transition("paused", "closed")
     with pytest.raises(UnknownStateError):
         validate_transition("active", "paused")
+
+
+# --------------------------------------------------------------------------- #
+# Acoplamientos privados entre módulos — INV-OP-002 e INV-OP-004
+# --------------------------------------------------------------------------- #
+
+# Un `_nombre` importado desde OTRO módulo es un contrato que el guion bajo
+# niega: quien refactoriza el dueño no tiene por qué buscar consumidores fuera.
+# Estos seis existen hoy y están declarados en el modelo; cada uno lleva su
+# consecuencia. Agregar uno nuevo, o quitar uno de estos, pone esto en rojo
+# para que se decida a propósito y se actualice el README del modelo.
+_DECLARED_PRIVATE_IMPORTS = {
+    # El pago del operador reusa el camino del turno. Sin tests de integración
+    # (deuda #1), un refactor aquí rompe la venta en silencio: hueco de INV-OP-002.
+    ("services/confirm_payment.py", "app.services.agent_action", "_bump_lifecycle_stage"),
+    ("services/confirm_payment.py", "app.services.agent_action", "_fetch_product_price"),
+    ("services/confirm_payment.py", "app.services.agent_action", "_merge_profile"),
+    # El echo resuelve cliente y conversación con el código del ingest normal.
+    # Por `_resolve_client_user` entra la deuda #20: hueco de INV-OP-004.
+    ("services/ingest_operator_echo.py", "app.services.ingest", "_find_last_conversation"),
+    ("services/ingest_operator_echo.py", "app.services.ingest", "_mask_identity"),
+    ("services/ingest_operator_echo.py", "app.services.ingest", "_resolve_client_user"),
+}
+
+
+def _private_cross_module_imports() -> set[tuple[str, str, str]]:
+    found = set()
+    for rel_path, source in _python_sources():
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app"):
+                for alias in node.names:
+                    if alias.name.startswith("_"):
+                        found.add((rel_path, node.module, alias.name))
+    return found
+
+
+def test_private_cross_module_imports_are_exactly_the_declared_ones():
+    """Los `_privados` que cruzan módulos son solo los que el modelo conoce."""
+    found = _private_cross_module_imports()
+    new = sorted(found - _DECLARED_PRIVATE_IMPORTS)
+    gone = sorted(_DECLARED_PRIVATE_IMPORTS - found)
+    assert not new and not gone, (
+        "Cambió el acoplamiento privado entre módulos. Declararlo (o retirarlo) "
+        "en este test y en system-model/README.md § Acoplamientos entre módulos.\n"
+        f"  nuevos: {new}\n  desaparecidos: {gone}"
+    )
+

@@ -64,11 +64,22 @@ invariants:
       en `human_handoff`, el guard vio "no está closed" y escribió la segunda
       venta. Mirar el pago en contexto en vez del estado cierra el hueco para
       cualquier estado en que la conversación haya quedado.
-    refs: [ADR-009, P11]
-    status: holds
+    refs: [ADR-009, P11, deuda#1]
+    status: partial
     boundary: backend
     enforcement:
       kind: test
+      gap: >
+        Las pruebas ejercitan `evaluate_confirmation`, que es pura: deciden
+        BIEN si escribir. El camino que escribe de verdad no tiene test de
+        integración (deuda #1), y además reusa tres privadas de otro módulo:
+        `confirm_payment()` llama `_fetch_product_price`, `_merge_profile` y
+        `_bump_lifecycle_stage` de `agent_action.py`. Un refactor de esos
+        guiones bajos pensado para el turno del agente cambia la venta sin
+        que nada aquí se ponga rojo. Lo único que lo vigila es
+        `test_private_cross_module_imports_are_exactly_the_declared_ones`,
+        que detecta si el acoplamiento cambia de forma, no si cambia el
+        comportamiento.
       tests:
         - tests/services/test_confirm_payment.py::test_bug_sequence_yields_exactly_one_sale
         - tests/services/test_confirm_payment.py::test_closed_and_paid_is_idempotent
@@ -104,11 +115,23 @@ invariants:
       tanto trabajo costó cerrarle al LLM. El echo entra al historial para que el
       modelo lo lea, y ahí se acaba su autoridad: exactamente dos filas escritas,
       el mensaje y su evento de auditoría.
-    refs: [ADR-013, P29]
-    status: holds
+    refs: [ADR-013, P29, deuda#20]
+    status: partial
     boundary: backend
     enforcement:
       kind: test
+      gap: >
+        Las pruebas cubren lo que el enunciado nombra, no la identidad del
+        cliente. El echo resuelve el client_user con el mismo
+        `_resolve_client_user` que el ingest normal, y ahí escribe
+        `display_name`: en el camino con bsuid lo pisa cuando el valor es
+        verdadero (ingest.py:720-721), y en los ON CONFLICT lo mete sin guard
+        vía `set_on_match` (ingest.py:700), así que un None también pisa.
+        `Normalize Echo` deriva el nombre de `profile.name || profile.username`
+        y el echo no trae `name`, así que un nombre bueno escrito desde un
+        inbound queda reemplazado por un username, y ese campo llega al prompt
+        (prompt_context.py:311). Ningún test lo ve: los de echo usan el mismo
+        nombre de punta a punta. Deuda #20.
       tests:
         - tests/services/test_ingest_operator_echo.py::test_echo_never_touches_the_conversation_context
         - tests/services/test_ingest_operator_echo.py::test_echo_never_bumps_the_strategy_version
@@ -166,24 +189,30 @@ invariants:
     enforcement:
       kind: manual
       note: >
-        ⚠️ LA DOCUMENTACIÓN DEL BACKEND ESTÁ DESACTUALIZADA SOBRE ESTO. CLAUDE.md
-        y el ROADMAP dicen "falta la fase 4" y "cero filas con author='operator'";
-        se escribieron el 2026-09-07 a las 06:48 y la sesión de n8n ocurrió a las
-        08:03 del mismo día. La fase 4 SÍ está desplegada: `cafe_arenillo_v2.json`
-        (updatedAt 2026-09-07T13:02:22Z) trae los tres nodos nuevos —
-        `Switch Payload Kind`, `Normalize Echo`, `POST Operator Echo` — y `master`
-        pasó de 10 a 15 asignaciones con `payload_kind` y los cuatro campos del
-        echo.
+        La fase 4 está desplegada desde el 2026-09-07: `cafe_arenillo_v2`
+        (updatedAt 2026-09-07T13:02:22Z, igual al export del repo) trae
+        `Switch Payload Kind`, `Normalize Echo` y `POST Operator Echo`, y
+        `master` pasó de 10 a 15 asignaciones.
 
-        Queda `unverified`, no `holds`, porque el mecanismo está desplegado pero
-        NADIE ha observado todavía una fila con `author='operator'` en la base.
-        La verificación es una query, no un test:
+        Verificado el 2026-09-12 (sesión read-only): 0 filas con
+        author='operator'. La rama del Switch está bien y nunca ha corrido:
+
+          - 101 ejecuciones de `cafe_arenillo_v2` posteriores al despliegue
+            (73 `statuses`, 28 `messages`), cero `message_echoes`.
+          - Chakra sí entrega echoes: el último llegó a `master` el
+            2026-09-06 23:13 UTC (exec 12126), antes del despliegue.
+            Reproducido contra las asignaciones y el `Normalize Echo`
+            desplegados, sale un cuerpo que satisface `OperatorEchoRequest`.
+
+        Sigue `unverified`, no `violated`: lo que falta es observar un echo
+        real después del despliegue, no arreglar código. La verificación es
+        una query:
 
             SELECT count(*), max(created_at) FROM messages WHERE author = 'operator';
 
-        Si devuelve > 0, esto pasa a `holds` con la fecha como evidencia. Si
-        sigue en 0 después de que el operador escriba, vuelve a `violated` y hay
-        un bug en la rama nueva del Switch.
+        Si devuelve > 0, esto pasa a `holds` con la fecha y P29 cierra. Si
+        sigue en 0 después de que el operador escriba, el problema está antes
+        de n8n (suscripción de Chakra), no en el Switch.
 
   - id: INV-OP-007
     statement: >

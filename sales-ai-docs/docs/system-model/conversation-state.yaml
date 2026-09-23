@@ -169,13 +169,24 @@ invariants:
       distinta, y por eso el bot conversaba mientras la memoria moría en
       silencio.
     refs: [deuda#7, P4, ADR-010]
-    status: unverified
+    status: holds
     boundary: cross
     enforcement:
       kind: manual
       note: >
-        El secreto se corrigió el 2026-09-04 y la revisión --0000058 arranca
-        diciendo "OpenAI key: loaded from Key Vault". Pero NADIE ha observado
-        todavía un resumen persistido en producción. Sigue `unverified` a
-        propósito hasta que haya una fila con `last_conversation_summary`; la
-        verificación es una query, no un test.
+        Observado en producción el 2026-09-12, en una sesión Postgres con
+        default_transaction_read_only = on: 4 client_users con resumen
+        persistido. Funciona hoy, 4 de 35+. El resumen vive dentro de
+        `client_users.profile` (JSONB), no en una columna, así que la query es:
+
+            SELECT count(*) FROM client_users WHERE profile ? 'last_conversation_summary';
+
+        El secreto se había corregido el 2026-09-04 (revisión --0000058,
+        "OpenAI key: loaded from Key Vault").
+
+        Este `holds` es una FOTO del 2026-09-12, no una garantía continua: el
+        boundary es `cross` y nada en CI lo re-verifica. La causa raíz fue un
+        secreto, y hay dos claves de OpenAI independientes (backend y n8n); si
+        la del backend vuelve a morir, el bot sigue conversando y esto vuelve a
+        romperse en silencio sin que CI se entere. Ante la duda, re-correr la
+        query.

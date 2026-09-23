@@ -4,7 +4,7 @@
 Lee `sales-ai-docs/docs/system-model/*.yaml` y falla cuando una declaración deja
 de corresponderse con el repo. Existe por una razón concreta: este proyecto ya
 tiene mucha documentación en prosa (ROADMAP, ADRs, postmortems, la tabla de
-deudas de CLAUDE.md) y la prosa no falla en CI. P31 se cerró el 2026-09-05 y se
+deudas) y la prosa no falla en CI. P31 se cerró el 2026-09-05 y se
 reabrió el 09-07 porque nada verificaba la afirmación "P29 lo cubre entero".
 
 La regla que da todo el valor es una sola:
@@ -44,6 +44,7 @@ except ImportError:  # pragma: no cover - mensaje para quien lo corre en local
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = REPO_ROOT / "sales-ai-docs" / "docs" / "system-model"
 DECISIONS_DIR = REPO_ROOT / "sales-ai-docs" / "docs" / "decisions"
+ROADMAP = REPO_ROOT / "sales-ai-docs" / "docs" / "ROADMAP.md"
 TESTS_DIR = REPO_ROOT / "tests"
 
 #: Estados admitidos. El orden es el del reporte: de lo peor a lo mejor.
@@ -80,6 +81,45 @@ class Model:
 
     def fail(self, where: str, message: str) -> None:
         self.problems.append(Problem(where, message))
+
+
+# --------------------------------------------------------------------------- #
+# Registros canónicos del ROADMAP
+# --------------------------------------------------------------------------- #
+
+
+def _registry_rows(section: str, row_re: str) -> set[int]:
+    """Números con fila propia en una tabla del ROADMAP, bajo `## <section>`.
+
+    Lee solo la primera columna de cada fila y se detiene en el siguiente
+    encabezado `## `, así que una mención en prosa no cuenta como registro.
+    """
+    text = ROADMAP.read_text(encoding="utf-8")
+    start = text.find(f"\n## {section}\n")
+    if start == -1:
+        return set()
+    end = text.find("\n## ", start + 1)
+    body = text[start : end if end != -1 else len(text)]
+    return {int(m.group(1)) for m in re.finditer(row_re, body, re.MULTILINE)}
+
+
+_REGISTRIES: dict[str, set[int]] | None = None
+
+
+def registries() -> dict[str, set[int]]:
+    """`P` y `deuda` → los números que el ROADMAP tiene registrados.
+
+    Las deudas vivían en CLAUDE.md, que está gitignored: el modelo versionado
+    las citaba y nada podía comprobar que existieran. Desde que viven en el
+    ROADMAP, un `deuda#N` o un `PN` que no esté en su registro es un error.
+    """
+    global _REGISTRIES
+    if _REGISTRIES is None:
+        _REGISTRIES = {
+            "P": _registry_rows("Registro canónico de frentes P", r"^\| P(\d+) \|"),
+            "deuda": _registry_rows("Registro canónico de deudas", r"^\| (\d+) \|"),
+        }
+    return _REGISTRIES
 
 
 # --------------------------------------------------------------------------- #
@@ -177,15 +217,21 @@ def validate_invariant(
         model.fail(at, f"boundary inválido {boundary!r}; admitidos: {sorted(BOUNDARIES)}")
 
     # Las referencias son el puente con la documentación que ya existe. Un
-    # ADR-NNN tiene que resolver a un archivo real; si alguien renombra un ADR,
-    # el modelo lo grita en vez de quedarse con el enlace muerto.
+    # ADR-NNN tiene que resolver a un archivo real, y un PN o deuda#N a una fila
+    # de su registro en el ROADMAP; si alguien renombra o renumera, el modelo lo
+    # grita en vez de quedarse con el enlace muerto.
     for ref in inv.get("refs", []) or []:
-        if not REF_RE.fullmatch(str(ref)):
+        ref = str(ref)
+        if not REF_RE.fullmatch(ref):
             model.fail(at, f"referencia con forma desconocida: {ref!r}")
-        elif str(ref).startswith("ADR-"):
-            num = str(ref).split("-", 1)[1]
+        elif ref.startswith("ADR-"):
+            num = ref.split("-", 1)[1]
             if not list(DECISIONS_DIR.glob(f"ADR-{num}-*.md")):
                 model.fail(at, f"{ref} no resuelve a ningún archivo en docs/decisions/")
+        elif ref.startswith("P") and int(ref[1:]) not in registries()["P"]:
+            model.fail(at, f"{ref} no está en el ROADMAP § Registro canónico de frentes P")
+        elif ref.startswith("deuda#") and int(ref[6:]) not in registries()["deuda"]:
+            model.fail(at, f"{ref} no está en el ROADMAP § Registro canónico de deudas")
 
     enforcement = inv["enforcement"] or {}
     kind = enforcement.get("kind")

@@ -15,7 +15,10 @@
 > sección "Orden sugerido de cierre". Esto aplica en particular a lo que vino de
 > `docs/north-star.md`, que sigue siendo contexto de dirección de solo lectura.
 >
-> Última actualización: 2026-09-07 (P31 reabierto: la fase 4 de P29 no cubre al cliente que
+> Última actualización: 2026-09-22 (sincronización con la verificación read-only del 2026-09-12:
+> deuda #7 resuelta y P4 cerrado — 4 resúmenes persistidos —; la fase 4 de P29 está viva desde
+> el 09-07 y falta la 5, porque aún no ha llegado ningún echo; deuda #20 registrada).
+> Anterior: 2026-09-07 (P31 reabierto: la fase 4 de P29 no cubre al cliente que
 > responde horas después a una conversación cerrada — evidencia en la entrada de P31).
 > Anterior: 2026-09-06 (arreglo de la clave de OpenAI de n8n tras dos días y medio de
 > silencio; saludo repetido corregido; P35 registrado a partir de la conversación de prueba).
@@ -702,6 +705,8 @@ operacional valioso sin versionar, acumulándose. Decidir conscientemente: ¿ver
 **Avance parcial (2026-08-08)**: el registro canónico de frentes P se movió de `CLAUDE.md`
 a este archivo justo por esta razón — la lista maestra no puede vivir fuera de git. Lo que
 queda en `CLAUDE.md` es su espejo operativo. El resto de la decisión sigue abierto.
+**Avance parcial (2026-09-22)**: la tabla de deudas también se movió aquí (§ "Registro
+canónico de deudas"); en `CLAUDE.md` quedó solo un puntero, sin espejo.
 Riesgo: decisión, no código.
 
 ---
@@ -874,6 +879,7 @@ Riesgo: [ADR] **por escribir**, [B] cuando se implemente.
   `diagnostico-2026-06-14-P4-compaction.md`. n8n llama a OpenAI con otra credencial, y por eso el bot
   conversa mientras la memoria muere en silencio. **El fix es rotar el secreto, no código.** Hasta
   que se rote, la deuda #7 sigue abierta: 0 de 39 `client_users` con `last_conversation_summary`.
+  **Resuelta y verificada el 2026-09-12**: 4 `client_users` con resumen persistido.
 - **ADR-008 · Multiidioma + teléfono** (detección de idioma en backend; validación E.164-laxa).
 - **ADR-009 · Lazo de handoff** (endpoint confirm-payment + auth escopada + Telegram +
   corte de respuesta n8n + registro de venta + cierre a closed). Probado e2e.
@@ -923,6 +929,8 @@ reales.
    punto 2. **Hecho el 2026-09-04**: la revisión `--0000058` arrancó con
    `OpenAI key: loaded from Key Vault`. Falta verificar que la compaction corra de verdad en la
    próxima conversación de un cliente recurrente — hasta leerlo, la deuda #7 no se cierra.
+   ✅ **Leído el 2026-09-12**: `SELECT count(*) FROM client_users WHERE profile ? 'last_conversation_summary'`
+   → 4 (sesión read-only). Deuda #7 resuelta, P4 cerrado.
 2. **P15 vía ADR-010, en cuatro pasos y en este orden**: ~~aplicar el DDL~~ ✅ (2026-09-04
    02:09:28 UTC) → ~~mergear y desplegar~~ ✅ (PR #68, revisión `--0000058`, 02:47 UTC) →
    ~~aplicar datos y prompt (`014`)~~ ✅ (02:52 UTC) → **verificar en una conversación real**,
@@ -941,9 +949,11 @@ reales.
    persiste como outbound del operador, y una regla determinista pausa al bot tras un echo. Es la
    mitad cara de P29 y la que evita que el bot contradiga al humano delante del cliente. **Tercera
    ocurrencia real el 2026-08-30**, sobre una conversación que sigue `active`. **Fases 0–3 hechas**
-   (ADR-013, migración `015`, endpoint y pausa); **falta la fase 4**, que es la sesión de n8n del
-   punto 5, y la verificación en prod.
-5. **P5 + P9 + el switch de echoes de P29** en un solo toque del workflow vivo, con **re-export de
+   (ADR-013, migración `015`, endpoint y pausa). ✅ **Fase 4 desplegada el 2026-09-07 13:02 UTC.**
+   **Falta la fase 5**, la verificación en prod: al 2026-09-12, cero filas con `author='operator'`
+   porque de 101 ejecuciones posteriores al despliegue ninguna trae `message_echoes`. La rama del
+   Switch no ha corrido, no está rota.
+5. **P5 + P9 + ~~el switch de echoes de P29~~** (✅ el switch se desplegó solo el 2026-09-07) en un solo toque del workflow vivo, con **re-export de
    los tres workflows antes y después**: el respaldo del repo dejó de ser el vivo el 08-29. Se junta
    con la fase 4 de P29 a propósito: `map_webhook_data_arenillo` es el nodo que causó el drop
    silencioso de P14 y no se toca dos veces.
@@ -993,7 +1003,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P1 | Sincronizar documentación con la realidad | ✅ | — |
 | P2 | Persistir `quantity`/`grind`/`roast` (ORDER_FIELDS) | ✅ | — |
 | P3 | Cerrar gate permeable de `payment_confirmation` | ✅ *Superseded by ADR-009* | — |
-| P4 | Resucitar la lazy-compaction + hacerla ruidosa | 🟡 secreto rotado el 2026-09-04 y cargado por la revisión `--0000058`; falta verificar que la compaction corra en una conversación real | deuda #3, #7 |
+| P4 | Resucitar la lazy-compaction + hacerla ruidosa | ✅ secreto rotado el 2026-09-04 y cargado por la revisión `--0000058`; **verificado en prod el 2026-09-12**: 4 resúmenes persistidos | deuda #3, #7 |
 | P5 | Alerta de fallo silencioso en n8n (409/5xx/500) | 🔴 mecanismo corregido 2026-09-01; **precondición de P34** | deuda #12 |
 | P6 | Idempotencia outbound (texto e imagen) | ⬜ [ADR] | deuda #11 |
 | P7 | Debounce: race + conexión ocupada | ⬜ [ADR] | deuda #2 |
@@ -1018,7 +1028,7 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P26 | Consentimiento, canal autorizado y opt-out | 🟡 [ADR][DB] | — |
 | P27 | Motor de campañas outbound (remarketing) | 🔵 bloqueado por P24, P26 | — |
 | P28 | Gobierno de datos operativos en el NLG (llave/medios de pago inventados) | 🔴 registrado, no abierto | — |
-| P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 0–3 hechas en `feat/p29-echoes-operador`, con la migración `015` **aplicada en prod el 2026-09-05 14:45 UTC** antes del despliegue; faltan mergear/desplegar, la sesión de n8n (fase 4) y la verificación en prod (fase 5). El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
+| P29 | Presencia de operador — el bot no se calla cuando el humano atiende | 🟡 **ABIERTO y acotado a echoes** (ADR-013). Fases 0–3 mergeadas y desplegadas (PR #70), con la migración `015` **aplicada en prod el 2026-09-05 14:45 UTC** antes del despliegue; fase 4 (n8n) desplegada el 2026-09-07. **Falta la fase 5**: observar el primer echo real (0 filas al 2026-09-12, porque no ha llegado ninguno). El echo pisa `display_name`: deuda #20. El turno en vuelo queda fuera: es P34 | deuda #14 (mitad de presencia) |
 | P30 | Sin validación de dirección de envío | 🟡 registrado — se propone fusionar en ADR-010 | — |
 | P31 | Silencio post-venta (el bot contesta a quien acaba de comprar) | 🔴 **REABIERTO 2026-09-07**. Se cerró el 09-05 dando por hecho que P29 lo cubría entero; la evidencia del 09-07 (conv `b313a570` → `b2bd2c3c`) muestra que no cubre al cliente que responde horas después a una conversación cerrada. El rechazo de la ventana temporal sigue en pie. Se despacha con la fase 4 de P29 | deuda #14 (parcial) |
 | P32 | Placeholder de medios en el historial (mitad útil de P16) | 🔴 registrado 2026-09-01 | — |
@@ -1027,6 +1037,44 @@ mirar aquí. La tabla de `CLAUDE.md` es un espejo operativo, no la autoridad.
 | P35 | Medir cuándo el LLM narra un cambio del pedido sin emitirlo (precondición silenciosa de ADR-010 §6) | 🔴 registrado 2026-09-06, no abierto — **instrumentación primero**, no cambio de formato | deuda #8 (parcial) |
 
 **Siguiente número libre: P36.**
+
+---
+
+## Registro canónico de deudas
+
+**Esta tabla es la fuente de verdad de las deudas.** Vivía en `CLAUDE.md`, que está gitignored,
+mientras el modelo de sistema versionado la citaba con `refs: [deuda#N]`; se movió aquí el
+2026-09-22 por la misma razón que el registro de P (ver P20). `tools/check_invariants.py`
+falla si un YAML cita una deuda que no está en esta tabla.
+
+> **Un número de deuda retirado nunca se reutiliza.** Una deuda resuelta conserva su `#`
+> tachado; el siguiente item toma un número nuevo. Reutilizar un número rompe todo documento
+> anterior que lo mencione — ya pasó con `#10` (ver "Notas históricas de numeración").
+
+| # | Item | Severidad | Bloquea cliente que paga? |
+|---|------|-----------|---------------------------|
+| 1 | Sin tests de integración (cero contra Postgres) | Alta | Sí |
+| 2 | Debounce con `asyncio.sleep(5)` durante transacción ocupa pool + race confirmada en datos (dos inbounds a 4s, ambos respondidos — auditoría 2026-06-14). Fix = P7, requiere ADR previo | Alta | A medio plazo |
+| 3 | Sin telemetría (no hay alertas de fallas silenciosas n8n→backend); sin Log Analytics en el environment (solo stream en vivo). Parcial: fallos de compaction ahora a ERROR + contador `get_summary_failure_count()` (P4) | Alta | Sí |
+| 4 | Sin vista de operador para human_handoff. Mitigado: canal Telegram vivo (aviso de venta lista + loop, botón confirm-payment — ADR-009); la vista completa (inbox/dashboard/config) sigue pendiente | Alta (era Crítica) | Sí |
+| 5 | Multi-tenant defendido por aplicación, no por RLS | Media | Al 3er cliente |
+| 6 | Auth: un solo token compartido sin rotación ni scopes | Media | Al escalar callers |
+| 7 | Memoria entre conversaciones rota EN PROD: la lazy compaction nunca ha persistido un resumen. **Medido 2026-08-19: 0 de 35 client_users con `last_conversation_summary`; 27 profiles vacíos** — es total, no intermitente. Re-saludo re-confirmado ese día (cliente del 06-12 saludado como desconocido). **CAUSA RAÍZ ENCONTRADA 2026-09-01: la clave de OpenAI del backend es inválida.** `AuthenticationError: 401 invalid_api_key` sobre el secreto de OpenAI en Key Vault, en el ERROR con traza que P4 instaló — log de consola del backend del 2026-08-30T21:53:34.869Z. Era la candidata 2 del postmortem P4. n8n usa otra credencial y por eso el bot conversa mientras la memoria muere. **El fix es rotar el secreto, no código**. **RESUELTA el 2026-09-04**: la clave nueva se había creado bajo otro nombre de secreto y el backend solo lee el suyo; ya está copiada al que corresponde y verificada contra la API con la petición exacta de la compaction (`json_schema` estricto → HTTP 200), lo que descarta las candidatas 1 y 3. La revisión `--0000058` (2026-09-04 02:47 UTC) ya la cargó: el log de arranque dice `OpenAI key: loaded from Key Vault`. **VERIFICADA EN PROD el 2026-09-12**: 4 `client_users` con resumen persistido (`SELECT count(*) FROM client_users WHERE profile ? 'last_conversation_summary'`, sesión read-only; el resumen vive en `profile` JSONB, no es columna). Funciona hoy, 4 de 35+. `INV-CONV-007` → `holds`, como foto: nada en CI lo re-verifica si la clave vuelve a morir | Alta | Sí (la "memoria del vendedor" es promesa central) |
+| 8 | LLM puede inventar formatos en extracted_data: el chat call de n8n usa `json_object` simple, sin `json_schema` estricto (la compaction sí lo usa). Mitigado parcialmente por gates deterministas (phone E.164-laxo — ADR-008) | Media | Sí, si no se ataja |
+| 9 | Sin pruebas de carga — desconocemos throughput máximo | Alta | Sí (no se puede ofrecer SLA) |
+| 10 | ~~Corte n8n~~ **resuelto** (ADR-009 §3: n8n corta pre-LLM por estado y pre-envío por `approved`+estado; el loop escalado ahora notifica por Telegram). Queda: loop de texto VARIABLE no cubierto (trigger solo texto idéntico exacto) — ver `docs/registros/registro-P8-limitaciones.md`, hoy frente **P10**; e2e del corte pendiente (primer handoff real post-fix). ⚠️ *Nota histórica: antes del 2026-06-14, `#10` designaba el "reset por idle 30 min" que este archivo documentaba pero que nunca existió en código (cerrado por P1). Los documentos de junio usan ese sentido viejo.* | Media (era Alta) | Menor |
+| 11 | **Deja de ser 100 % con P29**: los mensajes del operador son las primeras filas outbound del sistema con `chakra_message_id` real. El outbound del BOT sigue sin él, así que la deuda no se cierra. Texto original: Idempotencia outbound CERO: **314/314** outbound sin `chakra_message_id` (medido 2026-09-01; era 284/284 el 08-19 y 85/85 en junio); el envío de imagen no se persiste como mensaje (sistema ciego a su side-effect); duplicados reales de saludo (8.9s) e imagen. Fix = P6, requiere ADR previo (toca schema de `messages`) | Alta | Sí (duplicados visibles al cliente) |
+| 12 | n8n sin alerta de fallo. **Mecanismo corregido 2026-09-01**: un 409 NO mata la ejecución — `POST Agent Action` lleva `continueOnFail: true`, así que el 409 o el 5xx se vuelven un item con `error`, caen al `else` de `Process Backend Response` como `suppressed_reason: backend_error`, y la ejecución termina marcada `success`. La rama de error existe; falta el aviso. Cero 409 en 268 ejecuciones retenidas. **2026-08-19: 4 respuestas 500 del ingest tragadas en silencio en una sola venta** (rama false de `IF Should Respond` → Stop, "success"). Fix = P5 (+P9 microfixes: `latency_ms` hardcodeado en 0, `slice(-10)` descarta la mitad del historial) | Alta | Sí (turnos perdidos sin alerta) |
+| 13 | ~~El early-return del debounce coalescido devolvía un dict de 2 claves → **500 en CADA coalescencia**~~ **RESUELTA** (PR #63, desplegada 2026-08-23): `build_suppressed_response()` construye la respuesta completa para los tres caminos de supresión (`debounce`, `duplicate`, `unreadable_content`) y `reason` es campo del schema. Verificado en prod 2026-08-26 (execs 11144/11146/11150). Nota: el 500 nunca mató la ejecución porque `POST Ingest Message` lleva `continueOnFail: true`. **La race de fondo sigue abierta: es P7.** | ~~Alta~~ | ~~Sí~~ |
+| 14 | **REMEDIADA EN SU MITAD DE PRESENCIA (P29, 2026-09-05)**: los echoes se persisten con `author='operator'`, entran a `recent_messages` con su marca, y una pausa determinista de 30 min calla al bot mientras el humano atiende. **Lo que sigue abierto es el turno en vuelo**: si el cliente escribe, n8n llama al LLM y mientras tanto el operador escribe, ese turno envía igual — el caso "llave 1234" del 08-19 queda parcialmente descubierto, y es **P34** (bloqueado por P5). Texto original: El sistema es ciego al operador: los mensajes que el humano manda desde la app de WhatsApp no pasan por el webhook (no se persisten, el LLM no los ve) y el bot sigue activo mientras el humano atiende — colisión "dos Sebastian" real el 2026-08-19 (el bot inventó una llave de pago entre la promesa y la llave real del operador). No existe forma de callar al bot salvo el circuit breaker. Fix = P29, registrado sin abrir | Alta | Sí (contradice al humano frente al cliente) |
+| 15 | El export de n8n del repo dejó de ser el workflow vivo: `cafe_arenillo_v2` tiene `updatedAt 2026-08-29T23:38:06Z` y `n8n_workflow/cafe_arenillo_v2.json` es del 08-18. Diff funcional nulo (dos nodos Telegram perdieron `resource`/`operation`), pero el archivo que el ROADMAP declara "único respaldo" ya no es byte-idéntico y no consta quién lo editó. Re-exportar antes de tocar n8n | Media | No, pero anula el rollback |
+| 16 | La instancia de n8n es compartida: `Predicción horaria → Telegram` falla 7 veces al día desde al menos el 08-19 y son **todas** las ejecuciones en error de la instancia; `Liquidación de señales` tiene tantas ejecuciones como el pipeline de ventas. Cualquier alerta por `status=error` nace ahogada, y la réplica única comparte CPU con automatizaciones ajenas | Media | Al alertar (P5) |
+| 17 | `max_natural` está activo y enrutado por el `master`, con un whitelist de 4 campos y **ninguno de identidad P14**: un cliente suyo con privacidad de número se descarta en silencio, la exec 9459 otra vez. Y es un **AI Agent con tools**, justo lo que ADR-002 descartó y lo que `n8n_workflow/CLAUDE.md` prohíbe. **Confirmado por el dueño el 2026-09-03: es un tenant REAL pero todavía NO está en operación, hoy es una prueba.** El riesgo no es de hoy, es del día que entre: su primer cliente con privacidad de número se perdería en silencio. Antes de ponerlo en operación hay que llevarle P14 y decidir qué hacer con su arquitectura de AI Agent | Media | No hoy; sí al ponerlo en operación |
+| 18 | El outbound se persiste ANTES de enviarse (`agent_action.py` escribe el mensaje y devuelve `approved`; recién después n8n llama a Chakra, sin `continueOnFail`). Si el envío falla, la DB afirma un envío que no ocurrió, el historial se contamina y el circuit breaker cuenta fantasmas. Distinto de #11: no es idempotencia, es veracidad del registro | Media | Sí, en silencio |
+| 19 | Los turnos suprimidos no dejan rastro en `audit_log`: el guard y el debounce retornan antes del `AuditLog` del ingest. Hoy hay 36 inbound sin evento `message_ingest`. **El camino nuevo de P29 SÍ deja rastro** (`turn_suppressed` con `reason: operator_active`), a diferencia de los tres anteriores; la deuda no se cierra hasta que los otros tres hagan lo mismo. No se puede distinguir un turno suprimido por el guard de uno por debounce ni de uno perdido por un 500 | Media | No, pero ciega el diagnóstico |
+| 20 | El echo del operador pisa `client_users.display_name`. `ingest_operator_echo` resuelve al cliente con el mismo `_resolve_client_user` que el ingest normal: en el camino con bsuid lo sobrescribe cuando el valor es verdadero (`ingest.py:720-721`), y en los dos `ON CONFLICT DO UPDATE` lo mete sin guard vía `set_on_match` (`ingest.py:700`), así que ahí también un `None` pisa un nombre bueno. `Normalize Echo` deriva el nombre de `profile.name \|\| profile.username` y el echo no trae `name`, así que gana un username; ese campo llega al prompt (`prompt_context.py:311`). Ningún test lo cubre: los de echo usan el mismo nombre de punta a punta. Hallado el 2026-09-12, **registrado, no arreglado**; es el hueco declarado de `INV-OP-004` | Media | Sí (el bot llama al cliente por otro nombre) |
+
+**Siguiente número libre: deuda #21.**
 
 ---
 
